@@ -1,0 +1,130 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!-- The shared coding-agent harness: launching and supervising processes in a checkout, and
+         rendering, spawning and reading back a coding-agent session on top of that.
+
+         IT EXISTS BECAUSE THERE WERE TWO COPIES. `qits-commands` and `qits-coding-agents` lived
+         inside qits-projects-daemon and inside qits-workspace-daemon, under two package roots, and
+         they had drifted: one copy grew AgentDesk and its tickets steering, the other grew the
+         plugin service, prompt refinement and three MCP servers where the first attaches one. Every
+         harness change had to be written twice or land on one side only, which is how the drift
+         happened and how it would keep happening. The union of both copies is what moved here, and
+         both daemons now depend on this artifact instead of carrying a copy.
+
+         TWO MODULES, NOT ONE, because `qits-coding-agents` does not compile without
+         `qits-commands` — Command, CommandService, CommandRegistry, ChatProtocol, ForeignPty — and
+         `qits-commands` was duplicated in exactly the same way. Leaving it behind would have made
+         one library depend on two different daemons' copies of the other; publishing both
+         de-duplicates the same problem twice.
+
+         FRAMEWORK-FREE, both modules: no Quarkus, no CDI, no JAX-RS, no Jackson, no configuration
+         reading. That constraint is what lets a Quarkus daemon and a plain-JVM daemon both embed
+         it, it is what lets it link into a GraalVM native image with nothing to register, and it is
+         why steering prompts are Java text blocks a unit test asserts byte for byte rather than
+         classpath resources. The one framework dependency is vertx-core, and only for
+         io.vertx.core.json.
+
+         WHAT THE HOST DAEMON SUPPLIES, rather than this library knowing it: the ambient identity of
+         the checkout (CheckoutContext), the scope-to-MCP-server mapping with its narrowing and its
+         pre-approval lists (AgentMcpServers), where the MCP servers are (McpEndpoints), the
+         instance defaults (AgentDefaults), and the action table (ActionResolver). Everything else
+         is here.
+
+         VERSIONS ARE CalVer, STAMPED AT RELEASE. Every pom carries the version verbatim rather than
+         deriving it, the same way qits-registries-javalib does, so the release stamp rewrites one
+         literal per pom and `deploy` at the root publishes both modules together. The daemons pin a
+         released coordinate, so a shared harness change is release-library-then-bump-daemons — see
+         README.md.
+
+         THE REACTOR ROOT IS `qits-agents`, NOT `qits-coding-agents`: the published module keeps the
+         artifactId the daemons already import, and a parent cannot share an artifactId with its own
+         module. `qits-agents` is the component directory this repository sits under in the wrapper,
+         which is the honest name for "both of these together". groupId is `eu.wohlben.qits`, as
+         every other published javalib on this platform uses — the daemons' in-repo copies sat under
+         plain `eu.wohlben` because they were modules of a daemon rather than artifacts anyone
+         resolved. -->
+    <groupId>eu.wohlben.qits</groupId>
+    <artifactId>qits-agents</artifactId>
+    <version>2026.909.40000</version>
+    <packaging>pom</packaging>
+    <name>qits-agents</name>
+
+    <modules>
+        <!-- Dependency order: the agent module launches its sessions as commands, never the other
+             way round. -->
+        <module>qits-commands</module>
+        <module>qits-coding-agents</module>
+    </modules>
+
+    <properties>
+        <maven.compiler.release>25</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+
+        <!-- PINNED, NOT IMPORTED FROM THE QUARKUS BOM. Both daemons managed these two through
+             quarkus-bom, because both daemons are Quarkus applications and had the import anyway.
+             Here there is no Quarkus: importing a ~400k-line platform BOM to learn two version
+             numbers would be the only Quarkus fact in a repository whose whole point is not having
+             one, and it would silently move both libraries whenever the platform moved. The values
+             are what quarkus-bom 3.34.6 managed at the move, so the moved suites run against
+             exactly what they ran against in the daemons. -->
+        <vertx.version>4.5.26</vertx.version>
+        <junit.version>6.0.3</junit.version>
+
+        <compiler-plugin.version>3.15.0</compiler-plugin.version>
+        <surefire-plugin.version>3.5.4</surefire-plugin.version>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>io.vertx</groupId>
+                <artifactId>vertx-core</artifactId>
+                <version>${vertx.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.junit.jupiter</groupId>
+                <artifactId>junit-jupiter</artifactId>
+                <version>${junit.version}</version>
+                <scope>test</scope>
+            </dependency>
+            <dependency>
+                <!-- The reactor's own module, so the agent module depends on it version-less and
+                     moves at the reactor's version. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-commands</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <version>${compiler-plugin.version}</version>
+                    <configuration>
+                        <parameters>true</parameters>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <version>${surefire-plugin.version}</version>
+                    <configuration>
+                        <!-- ForeignPty opens a PTY through java.lang.foreign downcalls, and every
+                             spawn in either module goes through it. Without this the JVM warns on
+                             every run and, per the warning's own text, will refuse it outright in a
+                             future release. Set here rather than per module because both modules
+                             spawn. -->
+                        <argLine>--enable-native-access=ALL-UNNAMED</argLine>
+                    </configuration>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+    </build>
+</project>
