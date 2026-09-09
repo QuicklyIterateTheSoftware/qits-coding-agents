@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<settings xmlns="http://maven.apache.org/SETTINGS/1.2.0"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.2.0 https://maven.apache.org/xsd/settings-1.2.0.xsd">
+  <mirrors>
+    <!-- Exact repository-id matches win over Maven's external:http:* blocker. This permits only
+         the platform's own repository URL supplied to the step, not arbitrary HTTP repos.
+
+         Read by the release-request and release steps the `maven-library` archetype composes
+         (`-s .qits-maven-settings.xml`), which run inside a step container. THIS REPOSITORY
+         RESOLVES NOTHING FROM THE PLATFORM REGISTRY — its only dependencies are vertx-core and
+         junit-jupiter from Central — so this first mirror matches no repository id here and is
+         inert. It is kept verbatim rather than trimmed because the file is platform wiring shared
+         with qits-registries-javalib, qits-eventstream-javalib and qits-blobstore, and because the
+         deploy step publishes THROUGH the same registry: a repository that later takes a platform
+         artifact should not have to rediscover the exact-id trick. -->
+    <mirror>
+      <id>qits-maven-network</id>
+      <mirrorOf>qits-maven</mirrorOf>
+      <url>${env.QITS_MAVEN_REPOSITORY_URL}</url>
+    </mirror>
+    <!-- Maven Central through qits-platform-mirror's pull-through cache. The exact repository id is
+         the same blocker exemption the entry above uses, scoped to the one repository the profile
+         below declares — so while QITS_MAVEN_CENTRAL_URL is unset or empty, nothing declares
+         qits-central, this entry matches nothing, and the unexpanded URL is never dialled. -->
+    <mirror>
+      <id>qits-central-proxy</id>
+      <mirrorOf>qits-central</mirrorOf>
+      <url>${env.QITS_MAVEN_CENTRAL_URL}</url>
+    </mirror>
+  </mirrors>
+  <profiles>
+    <!-- Active only while QITS_MAVEN_CENTRAL_URL is NON-EMPTY — measured on Maven 3.9: an empty
+         environment value does not activate a property-presence profile, so an injected-empty
+         variable is the off switch and no call site needs a guard. Central itself is re-declared
+         DISABLED, because repository ordering consults the stock central first and the mirror above
+         would never see a request; qits-central takes its place and the mirror reroutes it whole to
+         the pull-through. Unset means stock Maven Central, exactly as before this profile existed. -->
+    <profile>
+      <id>qits-central-proxy</id>
+      <activation>
+        <property><name>env.QITS_MAVEN_CENTRAL_URL</name></property>
+      </activation>
+      <repositories>
+        <repository>
+          <id>central</id>
+          <url>https://repo1.maven.org/maven2</url>
+          <releases><enabled>false</enabled></releases>
+          <snapshots><enabled>false</enabled></snapshots>
+        </repository>
+        <repository>
+          <id>qits-central</id>
+          <url>https://repo1.maven.org/maven2</url>
+          <releases><enabled>true</enabled></releases>
+          <snapshots><enabled>false</enabled></snapshots>
+        </repository>
+      </repositories>
+      <pluginRepositories>
+        <pluginRepository>
+          <id>central</id>
+          <url>https://repo1.maven.org/maven2</url>
+          <releases><enabled>false</enabled></releases>
+          <snapshots><enabled>false</enabled></snapshots>
+        </pluginRepository>
+        <pluginRepository>
+          <id>qits-central</id>
+          <url>https://repo1.maven.org/maven2</url>
+          <releases><enabled>true</enabled></releases>
+          <snapshots><enabled>false</enabled></snapshots>
+        </pluginRepository>
+      </pluginRepositories>
+    </profile>
+  </profiles>
+</settings>
