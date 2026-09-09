@@ -27,7 +27,9 @@ package eu.wohlben.qits.agents;
  * here: telemetry only answers for one workspace, so it is never the thing a session is scoped
  * <em>to</em> — it is what a narrowing unlocks.
  *
- * <p>Orthogonal to {@link AgentDesk}: the scope <em>addresses</em>, the desk <em>steers</em>.
+ * <p>Orthogonal to {@link AgentSurface}: the scope <em>addresses</em>, the surface <em>steers</em>.
+ * Both axes cross freely — a tickets desk can be narrowed to one repository, and narrowing to a
+ * repository must not quietly change what the session is steered at.
  */
 public enum AgentMcpScope {
   ACTIONS,

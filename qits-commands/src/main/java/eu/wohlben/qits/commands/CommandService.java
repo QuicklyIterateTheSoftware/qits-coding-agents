@@ -65,7 +65,8 @@ public final class CommandService {
    * caller-chosen id (agent launches render
    * it into the session-report hook URL before the command exists; null generates one) and {@code
    * agentSession} the first entry of an agent launch's session list. {@code agentType} is the
-   * coding-agent harness recorded on the command (null for non-agent launches).
+   * coding-agent harness recorded on the command and {@code agentSurface} where in the product the
+   * session was started from (both null for non-agent launches).
    */
   private record LaunchDescriptor(
       String actionId,
@@ -76,7 +77,8 @@ public final class CommandService {
       CommandKind kind,
       String commandId,
       AgentSessionRef agentSession,
-      String agentType) {
+      String agentType,
+      String agentSurface) {
 
     static LaunchDescriptor of(ActionResolver.ResolvedAction action) {
       return new LaunchDescriptor(
@@ -86,6 +88,7 @@ public final class CommandService {
           action.interactive(),
           action.environment(),
           CommandKind.TERMINAL,
+          null,
           null,
           null,
           null);
@@ -131,6 +134,29 @@ public final class CommandService {
       AgentSessionRef agentSession,
       CommandExitListener extraExitListener,
       String agentType) {
+    return launchAgent(
+        name,
+        script,
+        interactive,
+        environment,
+        commandId,
+        agentSession,
+        extraExitListener,
+        agentType,
+        null);
+  }
+
+  /** {@link #launchAgent} recording the surface the session was started from. */
+  public Command launchAgent(
+      String name,
+      String script,
+      boolean interactive,
+      Map<String, String> environment,
+      String commandId,
+      AgentSessionRef agentSession,
+      CommandExitListener extraExitListener,
+      String agentType,
+      String agentSurface) {
     Prepared prepared =
         prepare(
             new LaunchDescriptor(
@@ -142,7 +168,8 @@ public final class CommandService {
                 CommandKind.TERMINAL,
                 commandId,
                 agentSession,
-                agentType));
+                agentType,
+                agentSurface));
     registry.spawn(
         prepared.command().id(),
         prepared.command().executeScript(),
@@ -167,6 +194,29 @@ public final class CommandService {
       CommandExitListener extraExitListener,
       ChatProtocolFactory protocolFactory,
       String agentType) {
+    return launchChat(
+        name,
+        script,
+        environment,
+        commandId,
+        agentSession,
+        extraExitListener,
+        protocolFactory,
+        agentType,
+        null);
+  }
+
+  /** {@link #launchChat} recording the surface the session was started from. */
+  public Command launchChat(
+      String name,
+      String script,
+      Map<String, String> environment,
+      String commandId,
+      AgentSessionRef agentSession,
+      CommandExitListener extraExitListener,
+      ChatProtocolFactory protocolFactory,
+      String agentType,
+      String agentSurface) {
     Prepared prepared =
         prepare(
             new LaunchDescriptor(
@@ -178,7 +228,8 @@ public final class CommandService {
                 CommandKind.CHAT,
                 commandId,
                 agentSession,
-                agentType));
+                agentType,
+                agentSurface));
     registry.spawnChat(
         prepared.command().id(),
         prepared.command().executeScript(),
@@ -220,7 +271,8 @@ public final class CommandService {
             descriptor.kind(),
             descriptor.commandId(),
             descriptor.agentSession(),
-            descriptor.agentType());
+            descriptor.agentType(),
+            descriptor.agentSurface());
 
     Map<String, String> env = new HashMap<>();
     env.put("TERM", "xterm-256color");

@@ -22,7 +22,12 @@ import java.util.Optional;
  */
 public interface AgentCommands {
 
-  /** Spawns an interactive PTY agent command (kind {@code TERMINAL}). */
+  /**
+   * Spawns an interactive PTY agent command (kind {@code TERMINAL}).
+   *
+   * <p>{@code agentSurface} is {@link AgentSurface#key()} — recorded on the command so the launch's
+   * answer says which surface it is. Null for the sign-in terminal, which is nobody's surface.
+   */
   Command launchAgent(
       String name,
       String script,
@@ -31,9 +36,10 @@ public interface AgentCommands {
       String commandId,
       AgentSessionRef agentSession,
       CommandExitListener onExit,
-      String agentType);
+      String agentType,
+      String agentSurface);
 
-  /** Spawns a pipe-driven chat command (kind {@code CHAT}). */
+  /** Spawns a pipe-driven chat command (kind {@code CHAT}), recording its surface. */
   Command launchChat(
       String name,
       String script,
@@ -42,7 +48,8 @@ public interface AgentCommands {
       AgentSessionRef agentSession,
       CommandExitListener onExit,
       ChatProtocolFactory protocolFactory,
-      String agentType);
+      String agentType,
+      String agentSurface);
 
   /** Delivers a user turn to a running chat. */
   boolean chatSend(String commandId, String text);

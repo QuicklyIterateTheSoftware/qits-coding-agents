@@ -52,6 +52,37 @@ public final class CommandLifecycleService {
       String commandId,
       AgentSessionRef initialAgentSession,
       String agentType) {
+    return createRunning(
+        branch,
+        commitHash,
+        actionId,
+        actionName,
+        executeScript,
+        interactive,
+        kind,
+        commandId,
+        initialAgentSession,
+        agentType,
+        null);
+  }
+
+  /**
+   * {@link #createRunning} recording {@code agentSurface} — where in the product the session was
+   * started from — so the launch's answer says which surface it is rather than leaving a reader to
+   * match a substring of the display name.
+   */
+  public Command createRunning(
+      String branch,
+      String commitHash,
+      String actionId,
+      String actionName,
+      String executeScript,
+      boolean interactive,
+      CommandKind kind,
+      String commandId,
+      AgentSessionRef initialAgentSession,
+      String agentType,
+      String agentSurface) {
     Command command =
         Command.running(
             commandId != null ? commandId : UUID.randomUUID().toString(),
@@ -63,6 +94,7 @@ public final class CommandLifecycleService {
             executeScript,
             interactive,
             agentType,
+            agentSurface,
             Instant.now());
     if (initialAgentSession != null) {
       command = command.withSession(initialAgentSession);
@@ -147,6 +179,7 @@ public final class CommandLifecycleService {
         command.exitCode(),
         command.interactive(),
         command.agentType(),
+        command.agentSurface(),
         command.launchedAt(),
         command.finishedAt(),
         sessions);

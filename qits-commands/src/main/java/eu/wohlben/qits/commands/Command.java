@@ -29,6 +29,10 @@ import java.util.List;
  * @param exitCode the process exit code once finished; null while running
  * @param interactive whether a human attaches a terminal to it
  * @param agentType the coding-agent harness this launch drove; null for non-agent commands
+ * @param agentSurface where in the product the session was started from ({@code AgentSurface}'s
+ *     key), so a reader can tell two sessions apart without parsing {@link #actionName}; null for
+ *     non-agent commands, for the sign-in terminal, and for every agent command launched before the
+ *     surface became a value that travels
  * @param launchedAt when the process was spawned
  * @param finishedAt when it ended; null while running
  * @param agentSessions the ordered agent-session lineage; empty for non-agent commands
@@ -45,6 +49,7 @@ public record Command(
     Integer exitCode,
     boolean interactive,
     String agentType,
+    String agentSurface,
     Instant launchedAt,
     Instant finishedAt,
     List<AgentSessionRef> agentSessions) {
@@ -54,7 +59,13 @@ public record Command(
         agentSessions == null ? List.of() : Collections.unmodifiableList(new ArrayList<>(agentSessions));
   }
 
-  /** A freshly spawned command: RUNNING, no exit code, no end time, no sessions yet. */
+  /**
+   * A freshly spawned command with no surface: RUNNING, no exit code, no end time, no sessions yet.
+   *
+   * <p>Kept beside the surface-carrying overload rather than replaced by it, because this is a
+   * released artifact: a daemon picks up a new library at its next release, and an arity change on a
+   * public factory would make the bump a rewrite instead of a version line.
+   */
   public static Command running(
       String id,
       CommandKind kind,
@@ -65,6 +76,33 @@ public record Command(
       String executeScript,
       boolean interactive,
       String agentType,
+      Instant launchedAt) {
+    return running(
+        id,
+        kind,
+        branch,
+        commitHash,
+        actionId,
+        actionName,
+        executeScript,
+        interactive,
+        agentType,
+        null,
+        launchedAt);
+  }
+
+  /** A freshly spawned command, recording the surface the launch named. */
+  public static Command running(
+      String id,
+      CommandKind kind,
+      String branch,
+      String commitHash,
+      String actionId,
+      String actionName,
+      String executeScript,
+      boolean interactive,
+      String agentType,
+      String agentSurface,
       Instant launchedAt) {
     return new Command(
         id,
@@ -78,6 +116,7 @@ public record Command(
         null,
         interactive,
         agentType,
+        agentSurface,
         launchedAt,
         null,
         List.of());
@@ -97,6 +136,7 @@ public record Command(
         code,
         interactive,
         agentType,
+        agentSurface,
         launchedAt,
         at,
         agentSessions);
@@ -126,6 +166,7 @@ public record Command(
         exitCode,
         interactive,
         agentType,
+        agentSurface,
         launchedAt,
         finishedAt,
         grown);

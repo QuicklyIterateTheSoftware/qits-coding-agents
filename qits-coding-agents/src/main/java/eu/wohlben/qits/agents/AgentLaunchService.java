@@ -85,8 +85,8 @@ public final class AgentLaunchService {
           + " what it describes.";
 
   /**
-   * The steering an {@link AgentDesk#TICKETS} launch carries, appended to the harness's own system
-   * prompt. It names the desk, the tools it works through, and the two things a triage session gets
+   * The steering a {@link AgentSurface#PROJECT_TICKETS} launch carries, appended to the harness's
+   * own system prompt. It names the desk, the tools it works through, and the two things a triage session gets
    * wrong without being told: that a ticket's description has to say how to <em>see</em> the
    * problem, and that resolving is reversible, so nothing about a ticket needs guarding as if it
    * were final.
@@ -233,8 +233,9 @@ public final class AgentLaunchService {
       return launchLogin(type);
     }
 
+    AgentSurface surface = request.surfaceOrDefault();
     PinnedSession pinned = pinSession(request.resumeSessionId(), request.fork(), type);
-    LaunchSpec spec = renderChat(request.scope(), request.deskOrDefault(), pinned, type);
+    LaunchSpec spec = renderChat(request.scope(), surface, pinned, type);
     // Claude drives chat over stream-json; Kimi has no stdin chat, so its chat rides an in-JVM ACP
     // client with the scoped MCP servers carried on session/new.
     ChatProtocolFactory protocolFactory =
@@ -245,14 +246,15 @@ public final class AgentLaunchService {
 
     Command command =
         commands.launchChat(
-            nameFor(request.scope(), request.deskOrDefault(), type),
+            nameFor(request.scope(), surface, type),
             spec.script(),
             spec.environment(),
             pinned.commandId(),
             pinned.ref(),
             chatTranscriptSweep(),
             protocolFactory,
-            type.name());
+            type.name(),
+            surface.key());
     // The live transcript import: the durable head a mid-run re-attach replays from.
     transcriptTail.startTail(command.id(), type);
     String seed = request.deliverTaskPrompt() ? taskPromptBootstrap : request.initialContext();
@@ -280,10 +282,12 @@ public final class AgentLaunchService {
     }
 
     PinnedSession pinned = pinSession(null, false, type);
-    // Composed flows are the epic desk's: the run fetches a drafted task prompt and implements it,
-    // which is the plan surface. Nothing composes a tickets run.
+    // Its own surface rather than the epics desk's. This is a different session from a human's
+    // epics chat — read-only marked servers, a bootstrap seed, nobody watching — and it has always
+    // deserved its own key; borrowing the desk's was what there was before there were surfaces.
     LaunchSpec spec =
-        renderAutonomousChat(AgentMcpScope.REPOSITORY, AgentDesk.EPICS, pinned, type);
+        renderAutonomousChat(
+            AgentMcpScope.REPOSITORY, AgentSurface.EPIC_AUTONOMOUS, pinned, type);
     ChatProtocolFactory protocolFactory =
         type == AgentType.KIMI
             ? process ->
@@ -299,7 +303,8 @@ public final class AgentLaunchService {
             pinned.ref(),
             chatTranscriptSweep(),
             protocolFactory,
-            type.name());
+            type.name(),
+            AgentSurface.EPIC_AUTONOMOUS.key());
     transcriptTail.startTail(command.id(), type);
     // The bootstrap rides stdin as the first user turn (a chat only speaks over stdin); the agent
     // then pulls the real composed prompt back over MCP via taskPrompt.
@@ -325,18 +330,19 @@ public final class AgentLaunchService {
     }
 
     String seed = request.deliverTaskPrompt() ? taskPromptBootstrap : request.initialContext();
+    AgentSurface surface = request.surfaceOrDefault();
     PinnedSession pinned = pinSession(request.resumeSessionId(), request.fork(), type);
-    LaunchSpec spec =
-        renderInteractive(request.scope(), request.deskOrDefault(), seed, pinned, type);
+    LaunchSpec spec = renderInteractive(request.scope(), surface, seed, pinned, type);
     return commands.launchAgent(
-        interactiveNameFor(request.scope(), request.deskOrDefault(), type),
+        interactiveNameFor(request.scope(), surface, type),
         spec.script(),
         true,
         spec.environment(),
         pinned.commandId(),
         pinned.ref(),
         transcriptSweep(),
-        type.name());
+        type.name(),
+        surface.key());
   }
 
   /**
@@ -353,8 +359,10 @@ public final class AgentLaunchService {
           case CLAUDE -> "Claude sign-in";
           case KIMI -> "Kimi sign-in";
         };
+    // No surface: a sign-in terminal is not a session anyone started from anywhere in the product,
+    // and giving it one would key it to a configuration it must not render.
     return commands.launchAgent(
-        name, spec.script(), true, spec.environment(), null, null, null, agentType.name());
+        name, spec.script(), true, spec.environment(), null, null, null, agentType.name(), null);
   }
 
   /** Renders the interactive login command with the shared-volume credential overlay. */
@@ -518,12 +526,12 @@ public final class AgentLaunchService {
    * anything.
    */
   LaunchSpec renderChat(
-      AgentMcpScope scope, AgentDesk desk, PinnedSession pinned, AgentType agentType) {
+      AgentMcpScope scope, AgentSurface surface, PinnedSession pinned, AgentType agentType) {
     CodingAgent agent = CodingAgentFactory.ofType(agentType);
     for (ScopedMcp server : mcpServers.serversFor(scope)) {
       agent.mcpServer(server.key(), McpServers.httpMcp(server.url()));
     }
-    return withDesk(withSession(withAgentHome(agent, agentType), pinned), desk)
+    return withSteering(withSession(withAgentHome(agent, agentType), pinned), surface)
         .skipPermissions()
         .chat();
   }
@@ -583,7 +591,7 @@ public final class AgentLaunchService {
    * #renderChat}, but with each server URL read-only marked.
    */
   LaunchSpec renderAutonomousChat(
-      AgentMcpScope scope, AgentDesk desk, PinnedSession pinned, AgentType agentType) {
+      AgentMcpScope scope, AgentSurface surface, PinnedSession pinned, AgentType agentType) {
     CodingAgent agent = CodingAgentFactory.ofType(agentType);
     for (ScopedMcp server : mcpServers.serversFor(scope)) {
       // Unattended first turn under skip-permissions: mark the server read-only so the host's
@@ -592,7 +600,7 @@ public final class AgentLaunchService {
       // its own git work happens inside this container, not via host-side MCP mutations.
       agent.mcpServer(server.key(), McpServers.httpMcp(readOnlyMarked(server.url())));
     }
-    return withDesk(withSession(withAgentHome(agent, agentType), pinned), desk)
+    return withSteering(withSession(withAgentHome(agent, agentType), pinned), surface)
         .skipPermissions()
         .chat();
   }
@@ -612,7 +620,7 @@ public final class AgentLaunchService {
    */
   LaunchSpec renderInteractive(
       AgentMcpScope scope,
-      AgentDesk desk,
+      AgentSurface surface,
       String initialContext,
       PinnedSession pinned,
       AgentType agentType) {
@@ -623,33 +631,30 @@ public final class AgentLaunchService {
     if (initialContext != null && !initialContext.isBlank()) {
       agent.initialContext(initialContext);
     }
-    return withDesk(withSession(withAgentHome(agent, agentType), pinned), desk)
+    return withSteering(withSession(withAgentHome(agent, agentType), pinned), surface)
         .skipPermissions()
         .start();
   }
 
   /**
-   * Appends {@code desk}'s steering to the agent's system prompt, if it has any. {@link
-   * AgentDesk#EPICS} has none — deliberately, and it is the reason the desk axis could be added
-   * without touching a single running launch: the epics desk renders exactly the command it rendered
-   * before the enum existed, down to the byte.
+   * Appends {@code surface}'s steering to the agent's system prompt, if it has any. Every surface but
+   * {@link AgentSurface#PROJECT_TICKETS} steers with nothing today — deliberately, and it is the
+   * reason a steering axis could be added without touching a single running launch: those surfaces
+   * render exactly the command they rendered before the axis existed, down to the byte.
    */
-  private CodingAgent withDesk(CodingAgent agent, AgentDesk desk) {
-    String prompt = systemPromptFor(desk);
+  private CodingAgent withSteering(CodingAgent agent, AgentSurface surface) {
+    String prompt = systemPromptFor(surface);
     return prompt == null ? agent : agent.appendSystemPrompt(prompt);
   }
 
   /**
-   * The system-prompt appendix a desk steers with, or {@code null} for a desk that steers with
+   * The system-prompt appendix a surface steers with, or {@code null} for one that steers with
    * nothing. The epics desk is steered by the tools it was given and by the container it runs in,
    * which is how this whole surface worked before there was a second desk; only the tickets desk has
    * to say what it is, because it shares every one of those tools with the desk beside it.
    */
-  static String systemPromptFor(AgentDesk desk) {
-    return switch (desk) {
-      case EPICS -> null;
-      case TICKETS -> TICKETS_DESK_PROMPT;
-    };
+  static String systemPromptFor(AgentSurface surface) {
+    return AgentSurface.PROJECT_TICKETS.equals(surface) ? TICKETS_DESK_PROMPT : null;
   }
 
   /**
@@ -666,20 +671,20 @@ public final class AgentLaunchService {
     return agent;
   }
 
-  private String nameFor(AgentMcpScope scope, AgentDesk desk, AgentType agentType) {
+  private String nameFor(AgentMcpScope scope, AgentSurface surface, AgentType agentType) {
     return harnessName(
         scope,
-        desk,
+        surface,
         switch (agentType) {
           case CLAUDE -> "Claude Code";
           case KIMI -> "Kimi Code";
         });
   }
 
-  private String interactiveNameFor(AgentMcpScope scope, AgentDesk desk, AgentType agentType) {
+  private String interactiveNameFor(AgentMcpScope scope, AgentSurface surface, AgentType agentType) {
     return harnessName(
         scope,
-        desk,
+        surface,
         switch (agentType) {
           case CLAUDE -> "Claude Code terminal";
           case KIMI -> "Kimi Code terminal";
@@ -687,27 +692,31 @@ public final class AgentLaunchService {
   }
 
   /**
-   * The command's name — and, for {@link AgentDesk#TICKETS}, a <strong>cross-repo contract</strong>.
-   * The frontend segregates a project's sessions into the two desks by matching {@code
-   * " (tickets desk)"} in this name, because a command carries no desk field of its own: the desk is
-   * a launch-time choice and the command registry records what was launched, not why. Changing this
-   * suffix therefore moves every ticket session into the epics list without failing anything.
+   * The command's name — and, for {@link AgentSurface#PROJECT_TICKETS}, still a
+   * <strong>cross-repo contract</strong> for one more release. The frontend segregates a project's
+   * sessions into the two desks by matching {@code " (tickets desk)"} in this name, because until now
+   * a command carried no surface field of its own.
    *
-   * <p>{@link AgentDesk#EPICS} keeps the scope-derived names it has always had — the frontend's
-   * "everything that is not a tickets desk" — so nothing that was running gets renamed. The desk wins
-   * over the scope where they would both speak: a tickets session says which desk it is, not how its
-   * one MCP URL was narrowed, because the narrowing is not what a reader of the session list is
-   * telling sessions apart by.
+   * <p><b>The name deliberately does not move with the surface.</b> The command now reports {@code
+   * agentSurface}, which is what lets the frontend stop parsing a display string — but the two sides
+   * ship separately, and renaming here in the same release would move every ticket session into the
+   * epics list of a frontend that has not shipped yet. Task 46e32cb3 deletes the string match, and
+   * the name becomes free to change once it has.
+   *
+   * <p>Every other surface keeps the scope-derived names it has always had, so nothing that was
+   * running gets renamed. The surface wins over the scope where they would both speak: a tickets
+   * session says which desk it is, not how its one MCP URL was narrowed, because the narrowing is not
+   * what a reader of the session list is telling sessions apart by.
    */
-  private static String harnessName(AgentMcpScope scope, AgentDesk desk, String harnessLabel) {
-    return switch (desk) {
-      case TICKETS -> harnessLabel + " (tickets desk)";
-      case EPICS ->
-          switch (scope) {
-            case ACTIONS -> harnessLabel + " (actions + repository MCP)";
-            case REPOSITORY -> harnessLabel + " (repository MCP)";
-            case PROJECT -> harnessLabel + " (project MCP)";
-          };
+  private static String harnessName(
+      AgentMcpScope scope, AgentSurface surface, String harnessLabel) {
+    if (AgentSurface.PROJECT_TICKETS.equals(surface)) {
+      return harnessLabel + " (tickets desk)";
+    }
+    return switch (scope) {
+      case ACTIONS -> harnessLabel + " (actions + repository MCP)";
+      case REPOSITORY -> harnessLabel + " (repository MCP)";
+      case PROJECT -> harnessLabel + " (project MCP)";
     };
   }
 

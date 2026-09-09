@@ -8,8 +8,9 @@ package eu.wohlben.qits.agents;
  * request.
  *
  * @param scope which MCP servers to attach, and how they are narrowed. Required.
- * @param desk which front desk the session opens — what it is steered at; null means {@link
- *     AgentDesk#EPICS}. Orthogonal to {@code scope}: the scope addresses, the desk steers.
+ * @param surface where in the product this session was started from — what it is steered at and what
+ *     its configuration is keyed by; null resolves to {@link #surfaceOrDefault()}'s shape-implied
+ *     guess for one release. Orthogonal to {@code scope}: the scope addresses, the surface steers.
  * @param mode chat or the interactive TUI; null means {@link AgentLaunchMode#CHAT}
  * @param initialContext the seed turn, or null for none
  * @param resumeSessionId a session of this container to continue, or null for a fresh one
@@ -23,7 +24,7 @@ package eu.wohlben.qits.agents;
  */
 public record AgentLaunchRequest(
     AgentMcpScope scope,
-    AgentDesk desk,
+    AgentSurface surface,
     AgentLaunchMode mode,
     String initialContext,
     String resumeSessionId,
@@ -35,7 +36,44 @@ public record AgentLaunchRequest(
     return mode == null ? AgentLaunchMode.CHAT : mode;
   }
 
-  public AgentDesk deskOrDefault() {
-    return desk == null ? AgentDesk.EPICS : desk;
+  /**
+   * The surface this launch is for, guessed from the request's shape when the caller named none.
+   *
+   * <p><b>A migration crutch with an expiry, not a contract.</b> It exists so the daemons can ship
+   * ahead of the frontends that will send the key: an <em>unknown</em> surface is refused outright
+   * ({@link AgentSurface#of}), but a <em>missing</em> one resolves for one release, and task
+   * 747a0225 removes this method once both frontends send their own. A guess is exactly the quiet
+   * default that makes a misconfigured caller look like a working one, which is why it is dated.
+   *
+   * <p>The guess is the honest reading of what the two daemons launch today, and it is lossy in
+   * precisely the place this epic exists to fix:
+   *
+   * <ul>
+   *   <li>a {@link AgentMcpScope#PROJECT}-scoped launch is the projects daemon's epics desk —
+   *       {@link AgentSurface#PROJECT_EPICS} — in either mode, because that container's chat and its
+   *       terminal are the same desk. Its tickets desk cannot be guessed: it sends the same scope and
+   *       the same mode, and is told apart only by the {@code desk} field the projects daemon still
+   *       accepts and maps to {@link AgentSurface#PROJECT_TICKETS} itself;
+   *   <li>any other chat is a workspace container's chat tab — {@link AgentSurface#WORKSPACE_CHAT}.
+   *       {@link AgentSurface#EPIC_CHAT} sends a byte-identical request, so the two collapse here;
+   *       that collapse is the whole reason the surface had to become a value that travels;
+   *   <li>any other interactive launch is a workspace container's agent tab — {@link
+   *       AgentSurface#WORKSPACE_AGENT}, collapsing {@link AgentSurface#EPIC_AGENT} the same way.
+   * </ul>
+   *
+   * <p>The two composed runs are never guessed: {@link AgentSurface#EPIC_AUTONOMOUS} and {@link
+   * AgentSurface#TICKET_DISPATCH} are named by their call sites, which have no human to have
+   * forgotten.
+   */
+  public AgentSurface surfaceOrDefault() {
+    if (surface != null) {
+      return surface;
+    }
+    if (scope == AgentMcpScope.PROJECT) {
+      return AgentSurface.PROJECT_EPICS;
+    }
+    return modeOrDefault() == AgentLaunchMode.INTERACTIVE
+        ? AgentSurface.WORKSPACE_AGENT
+        : AgentSurface.WORKSPACE_CHAT;
   }
 }

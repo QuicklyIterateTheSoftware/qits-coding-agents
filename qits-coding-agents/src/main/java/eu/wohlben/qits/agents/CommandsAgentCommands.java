@@ -33,9 +33,18 @@ public final class CommandsAgentCommands implements AgentCommands {
       String commandId,
       AgentSessionRef agentSession,
       CommandExitListener onExit,
-      String agentType) {
+      String agentType,
+      String agentSurface) {
     return commands.launchAgent(
-        name, script, interactive, environment, commandId, agentSession, onExit, agentType);
+        name,
+        script,
+        interactive,
+        environment,
+        commandId,
+        agentSession,
+        onExit,
+        agentType,
+        agentSurface);
   }
 
   @Override
@@ -47,9 +56,18 @@ public final class CommandsAgentCommands implements AgentCommands {
       AgentSessionRef agentSession,
       CommandExitListener onExit,
       ChatProtocolFactory protocolFactory,
-      String agentType) {
+      String agentType,
+      String agentSurface) {
     return commands.launchChat(
-        name, script, environment, commandId, agentSession, onExit, protocolFactory, agentType);
+        name,
+        script,
+        environment,
+        commandId,
+        agentSession,
+        onExit,
+        protocolFactory,
+        agentType,
+        agentSurface);
   }
 
   @Override

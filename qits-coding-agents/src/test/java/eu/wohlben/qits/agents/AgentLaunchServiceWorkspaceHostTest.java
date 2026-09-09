@@ -84,6 +84,7 @@ class AgentLaunchServiceWorkspaceHostTest {
         AgentSessionRef session,
         ChatProtocolFactory protocolFactory,
         String agentType,
+        String agentSurface,
         CommandKind kind) {}
 
     private Launch last() {
@@ -102,6 +103,7 @@ class AgentLaunchServiceWorkspaceHostTest {
           launch.script(),
           launch.interactive(),
           launch.agentType(),
+          launch.agentSurface(),
           Instant.now());
     }
 
@@ -114,7 +116,8 @@ class AgentLaunchServiceWorkspaceHostTest {
         String commandId,
         AgentSessionRef agentSession,
         CommandExitListener onExit,
-        String agentType) {
+        String agentType,
+        String agentSurface) {
       return record(
           new Launch(
               name,
@@ -125,6 +128,7 @@ class AgentLaunchServiceWorkspaceHostTest {
               agentSession,
               null,
               agentType,
+              agentSurface,
               CommandKind.TERMINAL));
     }
 
@@ -137,7 +141,8 @@ class AgentLaunchServiceWorkspaceHostTest {
         AgentSessionRef agentSession,
         CommandExitListener onExit,
         ChatProtocolFactory protocolFactory,
-        String agentType) {
+        String agentType,
+        String agentSurface) {
       return record(
           new Launch(
               name,
@@ -148,6 +153,7 @@ class AgentLaunchServiceWorkspaceHostTest {
               agentSession,
               protocolFactory,
               agentType,
+              agentSurface,
               CommandKind.CHAT));
     }
 
@@ -260,10 +266,16 @@ class AgentLaunchServiceWorkspaceHostTest {
   }
 
   private static AgentLaunchRequest chat(AgentMcpScope scope) {
-    // The desk is the projects side's axis and defaults to EPICS, which steers with nothing — so
-    // every launch here renders exactly what it rendered before the desk existed.
+    // No surface named: the shape-implied guess resolves it, and every surface this host serves
+    // steers with nothing — so every launch here renders exactly what it rendered before the axis
+    // existed.
     return new AgentLaunchRequest(
         scope, null, AgentLaunchMode.CHAT, null, null, false, false, null);
+  }
+
+  private static AgentLaunchRequest chat(AgentMcpScope scope, AgentSurface surface) {
+    return new AgentLaunchRequest(
+        scope, surface, AgentLaunchMode.CHAT, null, null, false, false, null);
   }
 
   // --- MCP scoping ------------------------------------------------------------------------------
@@ -452,7 +464,7 @@ class AgentLaunchServiceWorkspaceHostTest {
       AgentLaunchService service = service();
       AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
 
-      LaunchSpec spec = service.renderChat(AgentMcpScope.REPOSITORY, AgentDesk.EPICS, pinned, AgentType.CLAUDE);
+      LaunchSpec spec = service.renderChat(AgentMcpScope.REPOSITORY, AgentSurface.PROJECT_EPICS, pinned, AgentType.CLAUDE);
 
       assertTrue(spec.script().contains("--input-format stream-json"));
       assertTrue(spec.script().contains("workspaceId=" + WORKSPACE));
@@ -479,7 +491,7 @@ class AgentLaunchServiceWorkspaceHostTest {
       AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
 
       LaunchSpec spec =
-          service.renderAutonomousChat(AgentMcpScope.ACTIONS, AgentDesk.EPICS, pinned, AgentType.CLAUDE);
+          service.renderAutonomousChat(AgentMcpScope.ACTIONS, AgentSurface.PROJECT_EPICS, pinned, AgentType.CLAUDE);
 
       assertEquals(
           3,
@@ -494,7 +506,7 @@ class AgentLaunchServiceWorkspaceHostTest {
 
       LaunchSpec spec =
           service.renderInteractive(
-              AgentMcpScope.REPOSITORY, AgentDesk.EPICS, "do the thing", pinned, AgentType.CLAUDE);
+              AgentMcpScope.REPOSITORY, AgentSurface.PROJECT_EPICS, "do the thing", pinned, AgentType.CLAUDE);
 
       assertTrue(spec.script().startsWith("exec claude 'do the thing'"), spec.script());
       assertTrue(spec.interactive());
@@ -505,7 +517,7 @@ class AgentLaunchServiceWorkspaceHostTest {
       AgentLaunchService service = service();
       AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.KIMI);
 
-      LaunchSpec spec = service.renderChat(AgentMcpScope.REPOSITORY, AgentDesk.EPICS, pinned, AgentType.KIMI);
+      LaunchSpec spec = service.renderChat(AgentMcpScope.REPOSITORY, AgentSurface.PROJECT_EPICS, pinned, AgentType.KIMI);
 
       assertFalse(
           spec.environment().containsKey("HOME"), "Kimi reads KIMI_CODE_HOME, set container-wide");
@@ -518,7 +530,7 @@ class AgentLaunchServiceWorkspaceHostTest {
       AgentLaunchService service = service();
       AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
 
-      String script = service.renderChat(AgentMcpScope.REPOSITORY, AgentDesk.EPICS, pinned, AgentType.CLAUDE).script();
+      String script = service.renderChat(AgentMcpScope.REPOSITORY, AgentSurface.PROJECT_EPICS, pinned, AgentType.CLAUDE).script();
 
       assertTrue(script.contains("\"SessionStart\""), "lineage is not optional");
       assertFalse(script.contains("\"UserPromptSubmit\""), "the turn-boundary hooks are");
@@ -650,6 +662,59 @@ class AgentLaunchServiceWorkspaceHostTest {
       assertEquals("Claude Code (actions + repository MCP)", commands.last().name());
       assertEquals(CommandKind.CHAT, commands.last().kind());
       assertEquals("CLAUDE", commands.last().agentType());
+    }
+
+    @Test
+    void theFourSurfacesThisContainerServesAreToldApartOnlyByTheKeyTheyReport() {
+      // The heart of it, on the daemon where it matters: epic.chat and workspace.chat send
+      // byte-identical requests and render a byte-identical command with a byte-identical name.
+      // Before the surface travelled, nothing downstream could tell which of them it was serving —
+      // so one configuration could not be given to an epic's chat without giving it to every ad-hoc
+      // workspace chat as well.
+      AgentLaunchService service = service();
+      // One pinned identity for both, so the only thing that could differ is the surface: the
+      // session id and the hook url are per-launch and would otherwise mask the comparison.
+      AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
+
+      assertEquals(
+          service
+              .renderChat(AgentMcpScope.REPOSITORY, AgentSurface.EPIC_CHAT, pinned, AgentType.CLAUDE)
+              .script(),
+          service
+              .renderChat(
+                  AgentMcpScope.REPOSITORY, AgentSurface.WORKSPACE_CHAT, pinned, AgentType.CLAUDE)
+              .script(),
+          "identical today, deliberately");
+
+      Command epic = service.launchChat(chat(AgentMcpScope.REPOSITORY, AgentSurface.EPIC_CHAT));
+      Command workspace =
+          service.launchChat(chat(AgentMcpScope.REPOSITORY, AgentSurface.WORKSPACE_CHAT));
+
+      assertEquals(epic.actionName(), workspace.actionName(), "and identically named");
+      assertEquals("epic.chat", epic.agentSurface());
+      assertEquals("workspace.chat", workspace.agentSurface());
+    }
+
+    @Test
+    void anInteractiveLaunchReportsItsAgentTabSurface() {
+      Command command =
+          service()
+              .launch(
+                  new AgentLaunchRequest(
+                      AgentMcpScope.REPOSITORY,
+                      AgentSurface.WORKSPACE_AGENT,
+                      AgentLaunchMode.INTERACTIVE,
+                      null,
+                      null,
+                      false,
+                      false,
+                      null));
+
+      assertEquals("workspace.agent", command.agentSurface());
+      assertEquals(
+          "Claude Code terminal (repository MCP)",
+          command.actionName(),
+          "the name does not move with the surface: the frontend still matches it");
     }
 
     @Test
