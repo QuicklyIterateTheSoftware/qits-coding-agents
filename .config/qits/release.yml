@@ -1,0 +1,37 @@
+# THE WHOLE RELEASE CYCLE OF THIS REPOSITORY, in three declarations: which recipe it runs, and the
+# two coordinates it publishes.
+#
+# The epic that created this repository asked for `ci-event-release-request.yml` and
+# `ci-event-release.yml` modelled on qits-integrations-quarkus-javalib. That is superseded: the
+# wrapper now carries `.config/qits/release-archetypes/maven-library.yml`, qits-ci compiles it into
+# both pipelines at evaluation time, and this reactor is exactly the case it was written for — a
+# multi-module javalib with no deployable. Spelling the triggers, the tag fetch, the detached
+# checkout, the `$QITS_VERSION` guard, the `altDeploymentRepository` and the SBOM PUT here again
+# would be ~150 lines of platform process copied into a repository that knows none of it.
+#
+# WHAT IS LEFT IS WHAT ONLY THIS REPOSITORY KNOWS: that it publishes two jars, and where each one's
+# CycloneDX document lands. The release step runs `makeBom` at the reactor root with no `-pl`, so
+# every module writes its own `<module>/target/sbom.json`, and the composed postlude submits one
+# document per entry below, after the script and before the step's exit code — SBOM-before-green by
+# construction. The paths ARE the module list; there is no second place to keep it in step.
+#
+# THE GAVs ARE THE PUBLISHED COORDINATES, not the directory names, and the two happen to agree here
+# only because each module's artifactId matches its directory. They are quoted because a `:` after a
+# space is a YAML mapping indicator. The reactor ROOT is `eu.wohlben.qits:qits-agents` and is
+# deliberately absent: a `pom` parent is deployed by the same `mvn deploy` but carries no bytes worth
+# an SBOM, and declaring it would announce a third artifact nobody resolves directly.
+#
+# `artifacts:` must live in this file rather than in the archetype: qits-projects reads it at the tag
+# to announce the release, and an archetype default is invisible to that read.
+#
+# WHY THE QA SLOT MUST STAY GREEN, spelled out because it is the thing that blocks a release
+# silently: a release request only reaches READY when a gating BuildSuccessful exists for the merged
+# sha, and that comes from the archetype's `release-request:` step running
+# `./mvnw -B -ntp -s .qits-maven-settings.xml verify`. That command is checked to work in this tree
+# with the settings file present and with it absent; the settings file's mirrors match nothing here
+# (the only dependencies are vertx-core and junit-jupiter from Central) and are kept for the deploy
+# half and for the day a platform artifact does arrive.
+archetype: maven-library
+artifacts:
+  - { type: maven, name: "eu.wohlben.qits:qits-commands", sbom: qits-commands/target/sbom.json }
+  - { type: maven, name: "eu.wohlben.qits:qits-coding-agents", sbom: qits-coding-agents/target/sbom.json }
