@@ -3,6 +3,8 @@ package eu.wohlben.qits.agents;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import java.nio.file.Path;
+import java.util.List;
+import java.util.Map;
 
 /**
  * The Claude Code harness — a {@link CodingAgent} that renders its accumulated configuration into a
@@ -149,6 +151,93 @@ public class ClaudeCodeAgent extends CodingAgent {
       hooks.put("SessionEnd", group);
     }
     return new JsonObject().put("hooks", hooks);
+  }
+
+  // --- the capability probe ---------------------------------------------------------------------
+
+  /**
+   * Claude Code's report: the version from {@code claude --version}, the effort levels parsed out of
+   * {@code claude --help}, and the shipped alias set for models.
+   *
+   * <p><b>There is no listing command for models</b> — {@code claude} has {@code agents}, {@code
+   * auth}, {@code mcp}, {@code plugin}, {@code project}, {@code doctor}, {@code install} and nothing
+   * that prints a catalogue — so {@code modelsEnumerated} is false on every Claude report, including
+   * a successful one. That is not a probe failure; it is what this harness offers, and it is why the
+   * editor leads with the free-text escape.
+   *
+   * <p>The effort levels do come from the binary, because they are the one thing it will say: the
+   * flag's own help text enumerates them. Parsing help output is brittle by nature, which is exactly
+   * why the fixture in the suite is a verbatim copy of what the pinned CLI prints — a harness upgrade
+   * that rewords that line fails a test here instead of quietly emptying a dropdown.
+   */
+  @Override
+  public HarnessCapabilities capabilities(
+      ProcessRunner processes, Path cwd, Map<String, String> environment) {
+    ProcessRunner.Result help =
+        processes.exec(List.of("claude", "--help"), cwd, environment, PROBE_TIMEOUT);
+    if (help.timedOut() || help.exitCode() != 0) {
+      return HarnessCapabilities.shipped(
+          AgentType.CLAUDE,
+          help.timedOut()
+              ? "claude --help did not answer within " + PROBE_TIMEOUT.toSeconds() + "s"
+              : "claude --help exited " + help.exitCode());
+    }
+    List<String> levels = parseEffortLevels(help.output());
+    return new HarnessCapabilities(
+        AgentType.CLAUDE,
+        parseVersion(processes.exec(List.of("claude", "--version"), cwd, environment, PROBE_TIMEOUT)),
+        HarnessCapabilities.CLAUDE_MODELS,
+        // Never enumerated, and this is the honest word for it rather than a failure.
+        false,
+        true,
+        levels.isEmpty() ? HarnessCapabilities.CLAUDE_EFFORT_LEVELS : levels,
+        false,
+        "",
+        levels.isEmpty(),
+        levels.isEmpty() ? "claude --help no longer enumerates --effort levels" : "");
+  }
+
+  /**
+   * The {@code --effort} levels out of {@code claude --help}. The flag's description carries them in
+   * parentheses — {@code --effort <level>  Effort level for the current session (low, medium, high,
+   * xhigh, max)} — wrapped across lines by the help formatter, so the window after the flag is
+   * whitespace-collapsed before the parenthesised list is read out of it.
+   */
+  static List<String> parseEffortLevels(String help) {
+    if (help == null) {
+      return List.of();
+    }
+    int flag = help.indexOf("--effort");
+    if (flag < 0) {
+      return List.of();
+    }
+    String window =
+        help.substring(flag, Math.min(help.length(), flag + 400)).replaceAll("\\s+", " ");
+    java.util.regex.Matcher parenthesised =
+        java.util.regex.Pattern.compile("\\(([^)]*)\\)").matcher(window);
+    if (!parenthesised.find()) {
+      return List.of();
+    }
+    List<String> levels = new java.util.ArrayList<>();
+    for (String candidate : parenthesised.group(1).split(",")) {
+      String level = candidate.trim();
+      // A level is a bare word. Anything else means the help text has moved on to describing
+      // something other than a list, and an invented level is worse than a short one.
+      if (level.matches("[a-z][a-z0-9-]*")) {
+        levels.add(level);
+      }
+    }
+    return List.copyOf(levels);
+  }
+
+  /** {@code claude --version} prints {@code 2.1.226 (Claude Code)}; the version is the first token. */
+  static String parseVersion(ProcessRunner.Result result) {
+    if (result == null || result.timedOut() || result.exitCode() != 0) {
+      return "";
+    }
+    String output = result.output() == null ? "" : result.output().trim();
+    int space = output.indexOf(' ');
+    return space < 0 ? output : output.substring(0, space);
   }
 
   /**

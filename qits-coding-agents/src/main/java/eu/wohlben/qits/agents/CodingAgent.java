@@ -300,6 +300,30 @@ public abstract class CodingAgent {
   /** Where this harness persists a session's subagent sidechains, relative to its config dir. */
   public abstract Path subagentsDir(String cwd, String sessionId);
 
+  /**
+   * How long a capability probe may take before it is abandoned and the shipped fallback answered.
+   *
+   * <p>Bounded because this runs once at container start, in the daemon's boot path: a harness that
+   * hangs on {@code --help} must cost a container a few seconds and a flagged report, not its
+   * startup. Generous because the binaries are large and a cold container's first exec is slow.
+   */
+  protected static final java.time.Duration PROBE_TIMEOUT = java.time.Duration.ofSeconds(20);
+
+  /**
+   * What this harness can be configured with, read off the binary — the models, the effort levels
+   * (or the fact that it has none), and its version.
+   *
+   * <p>Every probe command lives in the implementation beside its parser, and every parser has a
+   * fixture of the binary's real output in the suite, so a harness upgrade that changes its help
+   * text fails a test rather than quietly emptying the editor's dropdowns.
+   *
+   * <p>A probe never throws: a failure answers {@link HarnessCapabilities#shipped} with the reason,
+   * because an empty dropdown is worse than a slightly stale one. Authentication is folded in
+   * afterwards by {@link HarnessCapabilityService}, which owns the credential volume's answer.
+   */
+  public abstract HarnessCapabilities capabilities(
+      ProcessRunner processes, Path cwd, Map<String, String> environment);
+
   /** Renders the configured agent as an interactive launch (a human attaches a terminal). */
   public abstract LaunchSpec start();
 

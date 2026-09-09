@@ -306,6 +306,74 @@ public class KimiCodeAgent extends CodingAgent {
     return result;
   }
 
+  // --- the capability probe ---------------------------------------------------------------------
+
+  /**
+   * Kimi Code's report: the version from {@code kimi --version}, and the model aliases from {@code
+   * kimi provider list --json} — a genuinely machine-readable catalogue, which is the asymmetry that
+   * makes the capability report an abstraction rather than a list.
+   *
+   * <p>{@code effortSupported} is <b>false</b>, and not because the probe found nothing: the CLI has
+   * no {@code --effort} flag at all (verified against 0.28.1, whose own {@code --help} lists {@code
+   * -m/--model} and no effort option). The absence is a fact about the harness, so the editor shows
+   * no effort control for a Kimi surface rather than a disabled one carrying Claude's values. The
+   * config schema does carry a per-model-alias {@code supportEfforts}, which is a property of a
+   * provider's model rather than a session flag this platform could set, and it is deliberately not
+   * read here.
+   *
+   * <p>An empty catalogue is not a failure. A container whose {@code config.toml} configures no
+   * providers answers {@code {"providers":{},"models":{}}}, and that is exactly true — which is also
+   * why nothing is shipped as a Kimi fallback: there is no alias set that would be true of any
+   * particular container.
+   */
+  @Override
+  public HarnessCapabilities capabilities(
+      ProcessRunner processes, Path cwd, Map<String, String> environment) {
+    ProcessRunner.Result providers =
+        processes.exec(
+            List.of("kimi", "provider", "list", "--json"), cwd, environment, PROBE_TIMEOUT);
+    if (providers.timedOut() || providers.exitCode() != 0) {
+      return HarnessCapabilities.shipped(
+          AgentType.KIMI,
+          providers.timedOut()
+              ? "kimi provider list --json did not answer within "
+                  + PROBE_TIMEOUT.toSeconds()
+                  + "s"
+              : "kimi provider list --json exited " + providers.exitCode());
+    }
+    List<String> models = parseModelAliases(providers.stdout());
+    return new HarnessCapabilities(
+        AgentType.KIMI,
+        ClaudeCodeAgent.parseVersion(
+            processes.exec(List.of("kimi", "--version"), cwd, environment, PROBE_TIMEOUT)),
+        models,
+        models != null,
+        // No effort flag at all. Not an empty list of somebody else's levels.
+        false,
+        List.of(),
+        false,
+        "",
+        models == null,
+        models == null ? "kimi provider list --json did not answer the providers/models shape" : "");
+  }
+
+  /**
+   * The model aliases out of {@code kimi provider list --json}, which prints the raw
+   * providers/models config: {@code {"providers":{"<id>":{…}},"models":{"<alias>":{"provider":"<id>",
+   * "model":"…"}}}}. The <em>keys</em> of {@code models} are the aliases {@code -m} takes, in the
+   * order the config holds them, and the value's {@code provider} is which provider serves it.
+   *
+   * @return the aliases, or null when the output is not that shape — which is a probe failure rather
+   *     than an empty catalogue, and the two must not look alike
+   */
+  static List<String> parseModelAliases(String json) {
+    eu.wohlben.qits.agents.json.Json root = eu.wohlben.qits.agents.json.Json.parse(json);
+    if (!root.isObject() || !root.path("models").isObject()) {
+      return null;
+    }
+    return List.copyOf(root.path("models").fields().keySet());
+  }
+
   /**
    * Kimi Code persists a session's transcript under {@code
    * $KIMI_CODE_HOME/sessions/<workDirKey>/<sessionId>/agents/main/wire.jsonl}, where {@code
