@@ -1,5 +1,7 @@
 package eu.wohlben.qits.agents;
 
+import eu.wohlben.qits.commands.InvalidCommandRequestException;
+
 /**
  * One agent launch as the caller asks for it.
  *
@@ -9,8 +11,8 @@ package eu.wohlben.qits.agents;
  *
  * @param scope which MCP servers to attach, and how they are narrowed. Required.
  * @param surface where in the product this session was started from — what it is steered at and what
- *     its configuration is keyed by; null resolves to {@link #surfaceOrDefault()}'s shape-implied
- *     guess for one release. Orthogonal to {@code scope}: the scope addresses, the surface steers.
+ *     its configuration is keyed by. Required: a launch that names none is refused. Orthogonal to
+ *     {@code scope}: the scope addresses, the surface steers.
  * @param mode chat or the interactive TUI; null means {@link AgentLaunchMode#CHAT}
  * @param initialContext the seed turn, or null for none
  * @param resumeSessionId a session of this container to continue, or null for a fresh one
@@ -37,43 +39,27 @@ public record AgentLaunchRequest(
   }
 
   /**
-   * The surface this launch is for, guessed from the request's shape when the caller named none.
+   * The surface this launch is for, refusing the launch when the caller named none.
    *
-   * <p><b>A migration crutch with an expiry, not a contract.</b> It exists so the daemons can ship
-   * ahead of the frontends that will send the key: an <em>unknown</em> surface is refused outright
-   * ({@link AgentSurface#of}), but a <em>missing</em> one resolves for one release, and task
-   * 747a0225 removes this method once both frontends send their own. A guess is exactly the quiet
-   * default that makes a misconfigured caller look like a working one, which is why it is dated.
+   * <p>There used to be a guess here — a {@link AgentMcpScope#PROJECT}-scoped launch read as the
+   * epics desk, anything else as a workspace container's chat or agent tab — so the daemons could
+   * ship ahead of the frontends that send the key. Both frontends send it now, so the guess is gone
+   * (task 747a0225): it was lossy in exactly the place this epic exists to fix ({@link
+   * AgentSurface#EPIC_CHAT} and {@link AgentSurface#WORKSPACE_CHAT} send byte-identical requests and
+   * collapsed onto one another), and a default that resolves a caller which forgot the key is the
+   * quiet kind that makes a misconfigured caller look like a working one.
    *
-   * <p>The guess is the honest reading of what the two daemons launch today, and it is lossy in
-   * precisely the place this epic exists to fix:
-   *
-   * <ul>
-   *   <li>a {@link AgentMcpScope#PROJECT}-scoped launch is the projects daemon's epics desk —
-   *       {@link AgentSurface#PROJECT_EPICS} — in either mode, because that container's chat and its
-   *       terminal are the same desk. Its tickets desk cannot be guessed: it sends the same scope and
-   *       the same mode, and is told apart only by the {@code desk} field the projects daemon still
-   *       accepts and maps to {@link AgentSurface#PROJECT_TICKETS} itself;
-   *   <li>any other chat is a workspace container's chat tab — {@link AgentSurface#WORKSPACE_CHAT}.
-   *       {@link AgentSurface#EPIC_CHAT} sends a byte-identical request, so the two collapse here;
-   *       that collapse is the whole reason the surface had to become a value that travels;
-   *   <li>any other interactive launch is a workspace container's agent tab — {@link
-   *       AgentSurface#WORKSPACE_AGENT}, collapsing {@link AgentSurface#EPIC_AGENT} the same way.
-   * </ul>
-   *
-   * <p>The two composed runs are never guessed: {@link AgentSurface#EPIC_AUTONOMOUS} and {@link
-   * AgentSurface#TICKET_DISPATCH} are named by their call sites, which have no human to have
-   * forgotten.
+   * <p>A missing surface is now refused the same way an unknown one is — {@link
+   * InvalidCommandRequestException}, which a daemon's API reports as a 400 rather than "Internal
+   * error". Note this is <em>not</em> the same case as a container created without a configuration
+   * document: that one keeps falling back to the library's shipped constants, permanently, because
+   * a container older than the store is a real and lasting shape. A caller that omits the surface is
+   * simply broken.
    */
-  public AgentSurface surfaceOrDefault() {
-    if (surface != null) {
-      return surface;
+  public AgentSurface requiredSurface() {
+    if (surface == null) {
+      throw new InvalidCommandRequestException("A launch must name its agent surface");
     }
-    if (scope == AgentMcpScope.PROJECT) {
-      return AgentSurface.PROJECT_EPICS;
-    }
-    return modeOrDefault() == AgentLaunchMode.INTERACTIVE
-        ? AgentSurface.WORKSPACE_AGENT
-        : AgentSurface.WORKSPACE_CHAT;
+    return surface;
   }
 }

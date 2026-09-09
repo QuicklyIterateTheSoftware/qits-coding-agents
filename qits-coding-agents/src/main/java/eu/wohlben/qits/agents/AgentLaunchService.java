@@ -221,6 +221,10 @@ public final class AgentLaunchService {
    * (re-attachable, logged). Tools run auto-approved.
    */
   public Command launchChat(AgentLaunchRequest request) {
+    // A bad request is refused before anything is resolved or probed: the surface is required, and
+    // a caller that forgot it gets a 400 rather than somebody's guess at what it meant.
+    AgentSurface surface = request.requiredSurface();
+
     // Resolve the harness once and thread it through every helper, so auth, render, transport and
     // the recorded command all agree. A resume keeps the resumed session's original harness (you
     // cannot resume a Claude session under Kimi); otherwise explicit choice → default → CLAUDE.
@@ -233,7 +237,6 @@ public final class AgentLaunchService {
     // launchLogin as a deliberate next step.
     requireSignedIn(type);
 
-    AgentSurface surface = request.surfaceOrDefault();
     PinnedSession pinned = pinSession(request.resumeSessionId(), request.fork(), type);
     Rendered rendered = renderedChat(request.scope(), surface, pinned, type);
     LaunchSpec spec = rendered.spec();
@@ -337,13 +340,15 @@ public final class AgentLaunchService {
    * transcript.
    */
   public Command launchInteractive(AgentLaunchRequest request) {
+    // As in launchChat: the surface is required, and a request without one is refused before any
+    // harness is resolved or any credential volume is read.
+    AgentSurface surface = request.requiredSurface();
     AgentType type = resolveHarness(request.resumeSessionId(), request.agentType());
     if (type == AgentType.KIMI && request.fork()) {
       throw new InvalidCommandRequestException("fork is not supported by Kimi Code");
     }
     requireSignedIn(type);
 
-    AgentSurface surface = request.surfaceOrDefault();
     PinnedSession pinned = pinSession(request.resumeSessionId(), request.fork(), type);
     // The first turn is the argv seed — the REPL opens on it — and anything after it is typed in
     // once the session is up. See openingTurns for why a second turn is the rare shape.

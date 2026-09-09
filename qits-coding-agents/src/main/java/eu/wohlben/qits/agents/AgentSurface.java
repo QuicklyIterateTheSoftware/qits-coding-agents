@@ -99,8 +99,9 @@ public record AgentSurface(String key) {
 
   /**
    * The surface named by {@code raw}, or empty when it is blank or outside {@link #KNOWN}. The
-   * lenient half of the parser, for a caller that has its own answer for "nobody named one" — see
-   * {@link AgentLaunchRequest#surfaceOrDefault()}.
+   * lenient half of the parser, for a caller reading an optional field off a wire body: "nobody
+   * named one" is empty here and becomes the refusal at {@link
+   * AgentLaunchRequest#requiredSurface()}, so the 400 says which of the two went wrong.
    */
   public static Optional<AgentSurface> parse(String raw) {
     if (raw == null || raw.isBlank()) {

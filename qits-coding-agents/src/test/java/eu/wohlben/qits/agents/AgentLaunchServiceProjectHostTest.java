@@ -308,7 +308,10 @@ class AgentLaunchServiceProjectHostTest {
   }
 
   private static AgentLaunchRequest chat(AgentMcpScope scope) {
-    return chat(scope, null);
+    // The surface is required now — there is no shape-implied guess left to lean on — so the
+    // scope-only helper names this host's default desk explicitly. It steers with nothing, which is
+    // why every launch through here still renders what it rendered before the axis existed.
+    return chat(scope, AgentSurface.PROJECT_EPICS);
   }
 
   private static AgentLaunchRequest chat(AgentMcpScope scope, AgentSurface surface) {
@@ -574,11 +577,8 @@ class AgentLaunchServiceProjectHostTest {
     }
 
     @Test
-    void aRequestWithoutASurfaceOpensTheEpicsDesk() {
-      assertEquals(
-          AgentSurface.PROJECT_EPICS, chat(AgentMcpScope.PROJECT, null).surfaceOrDefault());
-
-      service().launchChat(chat(AgentMcpScope.PROJECT));
+    void theEpicsDeskRendersTheNameItAlwaysHad() {
+      service().launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS));
 
       assertEquals("Claude Code (project MCP)", commands.last().name(), "and it is named as before");
     }
@@ -718,42 +718,37 @@ class AgentLaunchServiceProjectHostTest {
     }
 
     @Test
-    void aMissingSurfaceResolvesToTheShapeTheRequestImplies() {
-      // The migration crutch, dated: it lets the daemons ship before the frontends that will send
-      // the key. A PROJECT-scoped launch is the projects container's desk in either mode; anything
-      // else is a workspace container's chat or agent tab, and epic.* collapses onto workspace.*
-      // because those requests are byte-identical today.
+    void aMissingSurfaceIsRefusedRatherThanGuessed() {
+      // There was a shape-implied guess here for one release, so the daemons could ship ahead of
+      // the frontends: a PROJECT-scoped launch read as the epics desk, anything else as a workspace
+      // chat or agent tab. Both frontends send the key now, so the guess is gone — it collapsed
+      // epic.* onto workspace.*, which is the very distinction this axis exists to draw, and a
+      // caller that forgot the key looked exactly like one that meant the default.
+      assertThrows(
+          InvalidCommandRequestException.class,
+          () -> chat(AgentMcpScope.PROJECT, null).requiredSurface());
+      assertThrows(
+          InvalidCommandRequestException.class,
+          () ->
+              new AgentLaunchRequest(
+                      AgentMcpScope.REPOSITORY,
+                      null,
+                      AgentLaunchMode.INTERACTIVE,
+                      null,
+                      null,
+                      false,
+                      false,
+                      null)
+                  .requiredSurface());
+
+      // And it is refused at the door, before a harness is resolved or a credential volume read.
+      assertThrows(
+          InvalidCommandRequestException.class,
+          () -> service().launchChat(chat(AgentMcpScope.PROJECT, null)));
       assertEquals(
-          AgentSurface.PROJECT_EPICS, chat(AgentMcpScope.PROJECT, null).surfaceOrDefault());
-      assertEquals(
-          AgentSurface.WORKSPACE_CHAT, chat(AgentMcpScope.REPOSITORY, null).surfaceOrDefault());
-      assertEquals(
-          AgentSurface.WORKSPACE_CHAT, chat(AgentMcpScope.ACTIONS, null).surfaceOrDefault());
-      assertEquals(
-          AgentSurface.WORKSPACE_AGENT,
-          new AgentLaunchRequest(
-                  AgentMcpScope.REPOSITORY,
-                  null,
-                  AgentLaunchMode.INTERACTIVE,
-                  null,
-                  null,
-                  false,
-                  false,
-                  null)
-              .surfaceOrDefault());
-      assertEquals(
-          AgentSurface.PROJECT_EPICS,
-          new AgentLaunchRequest(
-                  AgentMcpScope.PROJECT,
-                  null,
-                  AgentLaunchMode.INTERACTIVE,
-                  null,
-                  null,
-                  false,
-                  false,
-                  null)
-              .surfaceOrDefault(),
-          "the project container's chat and its terminal are the same desk");
+          AgentSurface.PROJECT_TICKETS,
+          chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_TICKETS).requiredSurface(),
+          "a named surface passes through untouched");
     }
 
     @Test
@@ -875,7 +870,7 @@ class AgentLaunchServiceProjectHostTest {
               .launchChat(
                   new AgentLaunchRequest(
                       AgentMcpScope.REPOSITORY,
-                      null,
+                      AgentSurface.PROJECT_EPICS,
                       AgentLaunchMode.CHAT,
                       null,
                       KIMI_SESSION,
@@ -930,7 +925,7 @@ class AgentLaunchServiceProjectHostTest {
           .launchChat(
               new AgentLaunchRequest(
                   AgentMcpScope.REPOSITORY,
-                  null,
+                  AgentSurface.PROJECT_EPICS,
                   AgentLaunchMode.CHAT,
                   "start here",
                   null,
@@ -947,7 +942,7 @@ class AgentLaunchServiceProjectHostTest {
           .launchChat(
               new AgentLaunchRequest(
                   AgentMcpScope.REPOSITORY,
-                  null,
+                  AgentSurface.PROJECT_EPICS,
                   AgentLaunchMode.CHAT,
                   "ignored",
                   null,
@@ -967,7 +962,7 @@ class AgentLaunchServiceProjectHostTest {
           .launchChat(
               new AgentLaunchRequest(
                   AgentMcpScope.REPOSITORY,
-                  null,
+                  AgentSurface.PROJECT_EPICS,
                   AgentLaunchMode.CHAT,
                   "   ",
                   null,
@@ -1010,7 +1005,7 @@ class AgentLaunchServiceProjectHostTest {
                   .launch(
                       new AgentLaunchRequest(
                           AgentMcpScope.REPOSITORY,
-                          null,
+                          AgentSurface.PROJECT_EPICS,
                           AgentLaunchMode.INTERACTIVE,
                           null,
                           null,
@@ -1048,7 +1043,7 @@ class AgentLaunchServiceProjectHostTest {
           .launch(
               new AgentLaunchRequest(
                   AgentMcpScope.REPOSITORY,
-                  null,
+                  AgentSurface.PROJECT_EPICS,
                   AgentLaunchMode.INTERACTIVE,
                   null,
                   null,
@@ -1065,7 +1060,14 @@ class AgentLaunchServiceProjectHostTest {
       service()
           .launch(
               new AgentLaunchRequest(
-                  AgentMcpScope.REPOSITORY, null, null, null, null, false, false, null));
+                  AgentMcpScope.REPOSITORY,
+                  AgentSurface.PROJECT_EPICS,
+                  null,
+                  null,
+                  null,
+                  false,
+                  false,
+                  null));
 
       assertEquals(CommandKind.CHAT, commands.last().kind());
     }
@@ -1081,7 +1083,7 @@ class AgentLaunchServiceProjectHostTest {
                   .launch(
                       new AgentLaunchRequest(
                           AgentMcpScope.REPOSITORY,
-                          null,
+                          AgentSurface.PROJECT_EPICS,
                           AgentLaunchMode.CHAT,
                           null,
                           null,

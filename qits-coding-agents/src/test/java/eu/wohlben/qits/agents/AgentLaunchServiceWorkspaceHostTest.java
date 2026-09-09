@@ -283,11 +283,10 @@ class AgentLaunchServiceWorkspaceHostTest {
   }
 
   private static AgentLaunchRequest chat(AgentMcpScope scope) {
-    // No surface named: the shape-implied guess resolves it, and every surface this host serves
-    // steers with nothing — so every launch here renders exactly what it rendered before the axis
-    // existed.
-    return new AgentLaunchRequest(
-        scope, null, AgentLaunchMode.CHAT, null, null, false, false, null);
+    // The surface is required now, so the scope-only helper names one. Every surface this host
+    // serves steers with nothing, so every launch here renders exactly what it rendered before the
+    // axis existed — which is the point these tests are making.
+    return chat(scope, AgentSurface.WORKSPACE_CHAT);
   }
 
   private static AgentLaunchRequest chat(AgentMcpScope scope, AgentSurface surface) {
@@ -645,7 +644,7 @@ class AgentLaunchServiceWorkspaceHostTest {
               .launchChat(
                   new AgentLaunchRequest(
                       AgentMcpScope.REPOSITORY,
-                      null,
+                      AgentSurface.WORKSPACE_CHAT,
                       AgentLaunchMode.CHAT,
                       null,
                       KIMI_SESSION,
@@ -753,7 +752,7 @@ class AgentLaunchServiceWorkspaceHostTest {
           .launchChat(
               new AgentLaunchRequest(
                   AgentMcpScope.REPOSITORY,
-                  null,
+                  AgentSurface.WORKSPACE_CHAT,
                   AgentLaunchMode.CHAT,
                   "start here",
                   null,
@@ -770,7 +769,7 @@ class AgentLaunchServiceWorkspaceHostTest {
           .launchChat(
               new AgentLaunchRequest(
                   AgentMcpScope.REPOSITORY,
-                  null,
+                  AgentSurface.WORKSPACE_CHAT,
                   AgentLaunchMode.CHAT,
                   "ignored",
                   null,
@@ -790,7 +789,7 @@ class AgentLaunchServiceWorkspaceHostTest {
           .launchChat(
               new AgentLaunchRequest(
                   AgentMcpScope.REPOSITORY,
-                  null,
+                  AgentSurface.WORKSPACE_CHAT,
                   AgentLaunchMode.CHAT,
                   "   ",
                   null,
@@ -833,7 +832,7 @@ class AgentLaunchServiceWorkspaceHostTest {
                   .launch(
                       new AgentLaunchRequest(
                           AgentMcpScope.REPOSITORY,
-                          null,
+                          AgentSurface.WORKSPACE_AGENT,
                           AgentLaunchMode.INTERACTIVE,
                           null,
                           null,
@@ -871,7 +870,7 @@ class AgentLaunchServiceWorkspaceHostTest {
           .launch(
               new AgentLaunchRequest(
                   AgentMcpScope.REPOSITORY,
-                  null,
+                  AgentSurface.WORKSPACE_AGENT,
                   AgentLaunchMode.INTERACTIVE,
                   null,
                   null,
@@ -888,7 +887,14 @@ class AgentLaunchServiceWorkspaceHostTest {
       service()
           .launch(
               new AgentLaunchRequest(
-                  AgentMcpScope.REPOSITORY, null, null, null, null, false, false, null));
+                  AgentMcpScope.REPOSITORY,
+                  AgentSurface.WORKSPACE_CHAT,
+                  null,
+                  null,
+                  null,
+                  false,
+                  false,
+                  null));
 
       assertEquals(CommandKind.CHAT, commands.last().kind());
     }
@@ -904,7 +910,7 @@ class AgentLaunchServiceWorkspaceHostTest {
                   .launch(
                       new AgentLaunchRequest(
                           AgentMcpScope.REPOSITORY,
-                          null,
+                          AgentSurface.WORKSPACE_CHAT,
                           AgentLaunchMode.CHAT,
                           null,
                           null,
