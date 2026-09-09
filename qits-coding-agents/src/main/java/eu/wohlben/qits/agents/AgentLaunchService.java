@@ -241,7 +241,7 @@ public final class AgentLaunchService {
     ChatProtocolFactory protocolFactory =
         type == AgentType.KIMI
             ? process ->
-                new AcpChatProtocol(process, buildAcpSessionConfig(request.scope(), pinned))
+                new AcpChatProtocol(process, buildAcpSessionConfig(request.scope(), surface, pinned))
             : claudeChatProtocol(pinned);
 
     Command command =
@@ -292,7 +292,9 @@ public final class AgentLaunchService {
         type == AgentType.KIMI
             ? process ->
                 new AcpChatProtocol(
-                    process, buildAcpSessionConfig(AgentMcpScope.REPOSITORY, pinned, true))
+                    process,
+                    buildAcpSessionConfig(
+                        AgentMcpScope.REPOSITORY, AgentSurface.EPIC_AUTONOMOUS, pinned, true))
             : claudeChatProtocol(pinned);
     Command command =
         commands.launchChat(
@@ -474,7 +476,8 @@ public final class AgentLaunchService {
   }
 
   /** Configures the agent's session flags + report hook from the pinned identity. */
-  private CodingAgent withSession(CodingAgent agent, PinnedSession pinned) {
+  private CodingAgent withSession(
+      CodingAgent agent, PinnedSession pinned, AgentSurfaceConfiguration configuration) {
     AgentSessionRef ref = pinned.ref();
     if (ref != null) {
       switch (ref.source()) {
@@ -487,7 +490,7 @@ public final class AgentLaunchService {
       }
     }
     return agent
-        .activityTracking(defaults.activityTrackingEnabled())
+        .activityTracking(configuration.activityTracking())
         .sessionReporting(sessionReportUrl(pinned.commandId()));
   }
 
@@ -527,12 +530,15 @@ public final class AgentLaunchService {
    */
   LaunchSpec renderChat(
       AgentMcpScope scope, AgentSurface surface, PinnedSession pinned, AgentType agentType) {
+    AgentSurfaceConfiguration configuration = configurationFor(surface);
     CodingAgent agent = CodingAgentFactory.ofType(agentType);
-    for (ScopedMcp server : mcpServers.serversFor(scope)) {
+    for (ScopedMcp server : attachedServers(scope, configuration, false)) {
       agent.mcpServer(server.key(), McpServers.httpMcp(server.url()));
     }
-    return withSteering(withSession(withAgentHome(agent, agentType), pinned), surface)
-        .skipPermissions()
+    return withPermissions(
+            withSteering(
+                withSession(withAgentHome(agent, agentType), pinned, configuration), configuration),
+            configuration)
         .chat();
   }
 
@@ -555,8 +561,9 @@ public final class AgentLaunchService {
    * resumes; and the session-id sink that records the id kimi returns from {@code session/new} on the
    * command (kimi can't pin a fresh id, so the id is learned, not pinned).
    */
-  AcpSessionConfig buildAcpSessionConfig(AgentMcpScope scope, PinnedSession pinned) {
-    return buildAcpSessionConfig(scope, pinned, false);
+  AcpSessionConfig buildAcpSessionConfig(
+      AgentMcpScope scope, AgentSurface surface, PinnedSession pinned) {
+    return buildAcpSessionConfig(scope, surface, pinned, false);
   }
 
   /**
@@ -565,13 +572,13 @@ public final class AgentLaunchService {
    * the ACP counterpart of {@link #renderAutonomousChat}'s URL marking.
    */
   AcpSessionConfig buildAcpSessionConfig(
-      AgentMcpScope scope, PinnedSession pinned, boolean readOnly) {
+      AgentMcpScope scope, AgentSurface surface, PinnedSession pinned, boolean readOnly) {
     List<AcpSessionConfig.AcpMcpServer> servers = new ArrayList<>();
-    for (ScopedMcp server : mcpServers.serversFor(scope)) {
+    for (ScopedMcp server : attachedServers(scope, configurationFor(surface), readOnly)) {
       servers.add(
           new AcpSessionConfig.AcpMcpServer(
               server.key(),
-              readOnly ? readOnlyMarked(server.url()) : server.url(),
+              server.url(),
               KimiCodeAgent.stripServerPrefix(server.key(), server.allowedTools())));
     }
     AgentSessionRef ref = pinned.ref();
@@ -592,16 +599,21 @@ public final class AgentLaunchService {
    */
   LaunchSpec renderAutonomousChat(
       AgentMcpScope scope, AgentSurface surface, PinnedSession pinned, AgentType agentType) {
+    AgentSurfaceConfiguration configuration = configurationFor(surface);
     CodingAgent agent = CodingAgentFactory.ofType(agentType);
-    for (ScopedMcp server : mcpServers.serversFor(scope)) {
-      // Unattended first turn under skip-permissions: mark the server read-only so the host's
-      // ReadOnlyRepositoryToolFilter hides the mutating repository tools
-      // (createWorkspace/integrateBranch/…). The run still gets taskPrompt + the read-only tools;
-      // its own git work happens inside this container, not via host-side MCP mutations.
-      agent.mcpServer(server.key(), McpServers.httpMcp(readOnlyMarked(server.url())));
+    // Unattended first turn under skip-permissions: every server is read-only marked so the host's
+    // ReadOnlyRepositoryToolFilter hides the mutating repository tools
+    // (createWorkspace/integrateBranch/…). The run still gets taskPrompt + the read-only tools; its
+    // own git work happens inside this container, not via host-side MCP mutations. The fence is the
+    // union of the run's shape and the configuration's own readOnly flag — the two composed
+    // surfaces are seeded with it set, so the two agree rather than one overriding the other.
+    for (ScopedMcp server : attachedServers(scope, configuration, true)) {
+      agent.mcpServer(server.key(), McpServers.httpMcp(server.url()));
     }
-    return withSteering(withSession(withAgentHome(agent, agentType), pinned), surface)
-        .skipPermissions()
+    return withPermissions(
+            withSteering(
+                withSession(withAgentHome(agent, agentType), pinned, configuration), configuration),
+            configuration)
         .chat();
   }
 
@@ -624,26 +636,33 @@ public final class AgentLaunchService {
       String initialContext,
       PinnedSession pinned,
       AgentType agentType) {
+    AgentSurfaceConfiguration configuration = configurationFor(surface);
     CodingAgent agent = CodingAgentFactory.ofType(agentType);
-    for (ScopedMcp server : mcpServers.serversFor(scope)) {
+    for (ScopedMcp server : attachedServers(scope, configuration, false)) {
       agent.mcpServer(server.key(), McpServers.httpMcp(server.url()));
     }
     if (initialContext != null && !initialContext.isBlank()) {
       agent.initialContext(initialContext);
     }
-    return withSteering(withSession(withAgentHome(agent, agentType), pinned), surface)
-        .skipPermissions()
+    return withPermissions(
+            withSteering(
+                withSession(withAgentHome(agent, agentType), pinned, configuration), configuration),
+            configuration)
         .start();
   }
 
   /**
-   * Appends {@code surface}'s steering to the agent's system prompt, if it has any. Every surface but
-   * {@link AgentSurface#PROJECT_TICKETS} steers with nothing today — deliberately, and it is the
-   * reason a steering axis could be added without touching a single running launch: those surfaces
-   * render exactly the command they rendered before the axis existed, down to the byte.
+   * Appends the surface configuration's steering to the agent's system prompt, if it has any. An
+   * <em>empty</em> appendix is a first-class value and not an absence: {@link
+   * AgentSurface#PROJECT_EPICS} steers with nothing on purpose, which is the reason a steering axis
+   * could be added without touching a single running launch.
+   *
+   * <p>This is where the {@code switch} over the desk went. The prompt is now whatever the surface's
+   * configuration holds — an operator's edit, or the shipped constant when the container was born
+   * without a document.
    */
-  private CodingAgent withSteering(CodingAgent agent, AgentSurface surface) {
-    String prompt = systemPromptFor(surface);
+  private CodingAgent withSteering(CodingAgent agent, AgentSurfaceConfiguration configuration) {
+    String prompt = configuration.systemPromptAppendix();
     return prompt == null ? agent : agent.appendSystemPrompt(prompt);
   }
 
@@ -657,6 +676,97 @@ public final class AgentLaunchService {
   static String systemPromptFor(AgentSurface surface) {
     String shipped = AgentSurfaceConfigurations.shippedSystemPrompt(surface);
     return shipped.isEmpty() ? null : shipped;
+  }
+
+  /**
+   * Applies the configured permission mode.
+   *
+   * <p>Every launch shape in both daemons rendered {@code --dangerously-skip-permissions}
+   * unconditionally, which made it an invariant nobody chose — and the amplifier that would make an
+   * attached third-party MCP server dangerous inside a container holding the platform's own
+   * credentials. It is now a choice, seeded as what it was, so nothing moves until somebody moves
+   * it.
+   */
+  private CodingAgent withPermissions(
+      CodingAgent agent, AgentSurfaceConfiguration configuration) {
+    return configuration.permissionMode() == AgentPermissionMode.SKIP_PERMISSIONS
+        ? agent.skipPermissions()
+        : agent;
+  }
+
+  /**
+   * What this surface runs as: the mounted document's row, or the shipped constants for a container
+   * created before the document existed. Resolved once per launch and threaded through every
+   * renderer, so one launch cannot render half of one configuration and half of another.
+   */
+  private AgentSurfaceConfiguration configurationFor(AgentSurface surface) {
+    return defaults
+        .surfaceConfigurations()
+        .resolve(surface, defaults.defaultAgentType(), defaults.activityTrackingEnabled());
+  }
+
+  /**
+   * The MCP servers this launch attaches — <b>the line this epic draws through the MCP wiring</b>.
+   *
+   * <p>The host's {@link AgentMcpServers} still says how a server key becomes a url at a given
+   * {@link AgentMcpScope}: that needs the container's own project, repository and workspace ids,
+   * which this library deliberately does not have, and inventing a url here is the one failure this
+   * module refuses outright (see {@link McpEndpoints#mcpUrl}). The <b>configuration</b> says which of
+   * those servers attach, in what order, with which pre-approval, and whether they are fenced.
+   * Policy from the document, addressing from the host.
+   *
+   * <p>A configuration that attaches nothing of its own — the shipped fallback — takes the host's
+   * whole mapping, which is exactly what every launch did before this existed. A configuration that
+   * names a server the host does not serve at this scope <b>refuses the launch</b> rather than
+   * dropping it: a session missing a server it was configured with looks entirely normal and simply
+   * cannot do half its job, which is the failure shape this estate calls green-while-dead.
+   *
+   * <p>An attachment with an empty pre-approval list takes the host's shipped one. Pre-approval
+   * lists are not operator-editable in v1 — they are policy about what this product's agents may do
+   * without asking, keyed by server — so an empty list means "the shipped one", not "approve
+   * nothing".
+   *
+   * <p>{@code narrowProject}/{@code narrowRepository}/{@code narrowWorkspace} are not honoured here
+   * and cannot be until the host seam maps a key <em>plus a narrowing</em> to a url; they are the
+   * editor's description of what the host already builds, and today's seeded values are exactly
+   * that. See {@link AgentMcpAttachment}.
+   */
+  private List<ScopedMcp> attachedServers(
+      AgentMcpScope scope, AgentSurfaceConfiguration configuration, boolean unattended) {
+    List<ScopedMcp> hosted = mcpServers.serversFor(scope);
+    if (!configuration.attachesConfiguredServers()) {
+      return unattended ? hosted.stream().map(AgentLaunchService::markReadOnly).toList() : hosted;
+    }
+    List<ScopedMcp> attached = new ArrayList<>();
+    for (AgentMcpAttachment attachment : configuration.mcpServers()) {
+      ScopedMcp server =
+          hosted.stream()
+              .filter(candidate -> candidate.key().equals(attachment.server()))
+              .findFirst()
+              .orElseThrow(
+                  () ->
+                      new InvalidCommandRequestException(
+                          "The "
+                              + configuration.surface()
+                              + " configuration attaches the '"
+                              + attachment.server()
+                              + "' MCP server, which this daemon does not serve at scope "
+                              + scope));
+      ScopedMcp resolved =
+          new ScopedMcp(
+              server.key(),
+              server.url(),
+              attachment.allowedTools().isEmpty()
+                  ? server.allowedTools()
+                  : attachment.allowedTools());
+      attached.add(unattended || attachment.readOnly() ? markReadOnly(resolved) : resolved);
+    }
+    return List.copyOf(attached);
+  }
+
+  /** The same server with its url read-only marked. */
+  private static ScopedMcp markReadOnly(ScopedMcp server) {
+    return new ScopedMcp(server.key(), readOnlyMarked(server.url()), server.allowedTools());
   }
 
   /**

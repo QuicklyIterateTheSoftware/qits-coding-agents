@@ -71,12 +71,20 @@ class AgentLaunchServiceProjectHostTest {
   private AgentType defaultType;
   private boolean activityTracking;
 
+  /**
+   * What this container was created with. {@link AgentSurfaceConfigurations#shipped()} is a
+   * container born before the configuration document existed, which is what every test but the
+   * equivalence suite runs as.
+   */
+  private AgentSurfaceConfigurations configurations;
+
   @BeforeEach
   void setUp() {
     commands = new Commands();
     loggedIn = true;
     defaultType = AgentType.CLAUDE;
     activityTracking = true;
+    configurations = AgentSurfaceConfigurations.shipped();
   }
 
   // --- fakes ------------------------------------------------------------------------------------
@@ -253,6 +261,11 @@ class AgentLaunchServiceProjectHostTest {
           @Override
           public Optional<String> refinementModel() {
             return Optional.empty();
+          }
+
+          @Override
+          public AgentSurfaceConfigurations surfaceConfigurations() {
+            return configurations;
           }
         };
     CommandStore store = new CommandStore();
@@ -1026,7 +1039,7 @@ class AgentLaunchServiceProjectHostTest {
       AgentLaunchService service = service();
       AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.KIMI);
 
-      AcpSessionConfig config = service.buildAcpSessionConfig(AgentMcpScope.REPOSITORY, pinned);
+      AcpSessionConfig config = service.buildAcpSessionConfig(AgentMcpScope.REPOSITORY, AgentSurface.PROJECT_EPICS, pinned);
 
       assertEquals("/workspace", config.cwd());
       assertEquals(1, config.mcpServers().size());
@@ -1047,12 +1060,12 @@ class AgentLaunchServiceProjectHostTest {
           KIMI_SESSION,
           service
               .buildAcpSessionConfig(
-                  AgentMcpScope.REPOSITORY, service.pinSession(KIMI_SESSION, false, AgentType.KIMI))
+                  AgentMcpScope.REPOSITORY, AgentSurface.PROJECT_EPICS, service.pinSession(KIMI_SESSION, false, AgentType.KIMI))
               .resumeSessionId());
       assertNull(
           service
               .buildAcpSessionConfig(
-                  AgentMcpScope.REPOSITORY, service.pinSession(null, false, AgentType.KIMI))
+                  AgentMcpScope.REPOSITORY, AgentSurface.PROJECT_EPICS, service.pinSession(null, false, AgentType.KIMI))
               .resumeSessionId());
     }
 
@@ -1062,9 +1075,271 @@ class AgentLaunchServiceProjectHostTest {
       AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.KIMI);
 
       AcpSessionConfig config =
-          service.buildAcpSessionConfig(AgentMcpScope.REPOSITORY, pinned, true);
+          service.buildAcpSessionConfig(AgentMcpScope.REPOSITORY, AgentSurface.PROJECT_EPICS, pinned, true);
 
       assertTrue(config.mcpServers().get(0).url().contains("agentReadOnly=true"));
+    }
+  }
+
+  // --- rendering from the configuration -----------------------------------------------------
+
+  /**
+   * The equivalence the whole configuration epic rests on: a launch rendered from the seeded
+   * document is the launch rendered from the constants, byte for byte, per surface, per mode, for
+   * both harnesses. Everything downstream of here assumes "configured" and "hardcoded" are the same
+   * thing on day one.
+   */
+  @Nested
+  class ConfiguredRendering {
+
+    /** This host's three surfaces, seeded from its own serversFor and its own tool list. */
+    private AgentSurfaceConfigurations seeded() {
+      return new SeededConfigurationDocument()
+          // PROJECT scope: ?projectId=<id>, no narrowing beyond it.
+          .surface(
+              AgentSurface.PROJECT_EPICS,
+              true,
+              "",
+              SeededConfigurationDocument.server(
+                  "repository",
+                  true,
+                  false,
+                  false,
+                  false,
+                  ProjectHostMcpServers.READ_ONLY_REPOSITORY_TOOLS))
+          .surface(
+              AgentSurface.PROJECT_TICKETS,
+              true,
+              AgentLaunchService.TICKETS_DESK_PROMPT,
+              SeededConfigurationDocument.server(
+                  "repository",
+                  true,
+                  false,
+                  false,
+                  false,
+                  ProjectHostMcpServers.READ_ONLY_REPOSITORY_TOOLS))
+          // The composed run: the same server, read-only marked.
+          .surface(
+              AgentSurface.EPIC_AUTONOMOUS,
+              true,
+              "",
+              SeededConfigurationDocument.server(
+                  "repository",
+                  true,
+                  true,
+                  false,
+                  true,
+                  ProjectHostMcpServers.READ_ONLY_REPOSITORY_TOOLS))
+          .configurations();
+    }
+
+    @Test
+    void everySurfaceRendersWhatTheConstantsRendered() {
+      AgentLaunchService service = service();
+      List<AgentSurface> surfaces =
+          List.of(AgentSurface.PROJECT_EPICS, AgentSurface.PROJECT_TICKETS);
+
+      for (AgentSurface surface : surfaces) {
+        for (AgentType type : List.of(AgentType.CLAUDE, AgentType.KIMI)) {
+          AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, type);
+          for (AgentMcpScope scope : List.of(AgentMcpScope.PROJECT, AgentMcpScope.REPOSITORY)) {
+            configurations = AgentSurfaceConfigurations.shipped();
+            LaunchSpec constants = service.renderChat(scope, surface, pinned, type);
+            LaunchSpec interactiveConstants =
+                service.renderInteractive(scope, surface, "seed", pinned, type);
+
+            configurations = seeded();
+
+            assertEquals(
+                constants.script(),
+                service.renderChat(scope, surface, pinned, type).script(),
+                surface + " chat on " + type + " at " + scope);
+            assertEquals(
+                constants.environment(),
+                service.renderChat(scope, surface, pinned, type).environment());
+            assertEquals(
+                interactiveConstants.script(),
+                service.renderInteractive(scope, surface, "seed", pinned, type).script(),
+                surface + " interactive on " + type + " at " + scope);
+          }
+        }
+      }
+    }
+
+    @Test
+    void theComposedRunRendersItsFenceFromEitherSide() {
+      // The autonomous shape marks every url read-only, and the seeded epic.autonomous row carries
+      // readOnly too. The two must agree rather than one overriding the other, or turning the store
+      // on would double-mark or un-mark an unattended run.
+      AgentLaunchService service = service();
+      AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
+
+      configurations = AgentSurfaceConfigurations.shipped();
+      String constants =
+          service
+              .renderAutonomousChat(
+                  AgentMcpScope.REPOSITORY, AgentSurface.EPIC_AUTONOMOUS, pinned, AgentType.CLAUDE)
+              .script();
+
+      configurations = seeded();
+      String configured =
+          service
+              .renderAutonomousChat(
+                  AgentMcpScope.REPOSITORY, AgentSurface.EPIC_AUTONOMOUS, pinned, AgentType.CLAUDE)
+              .script();
+
+      assertEquals(constants, configured);
+      assertEquals(1, configured.split("agentReadOnly=true", -1).length - 1);
+    }
+
+    @Test
+    void theTicketsPromptComesFromTheDocumentRatherThanTheSwitch() {
+      // The switch over the desk is gone: an edited prompt renders, and the constant is what a
+      // container born without a document falls back to.
+      AgentLaunchService service = service();
+      AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
+
+      configurations =
+          new SeededConfigurationDocument()
+              .surface(AgentSurface.PROJECT_TICKETS, true, "Answer only in haiku.")
+              .configurations();
+
+      String script =
+          service
+              .renderChat(
+                  AgentMcpScope.PROJECT, AgentSurface.PROJECT_TICKETS, pinned, AgentType.CLAUDE)
+              .script();
+
+      assertTrue(script.contains("--append-system-prompt 'Answer only in haiku.'"), script);
+      assertFalse(script.contains("tickets front desk"), "the constant is the fallback, not the law");
+    }
+
+    @Test
+    void anEmptySystemPromptIsAValueAndNotAnAbsence() {
+      // project.epics is seeded with "" on purpose. If empty rendered as "the shipped default"
+      // instead, an operator could never clear a prompt.
+      AgentLaunchService service = service();
+      AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
+
+      configurations =
+          new SeededConfigurationDocument()
+              .surface(AgentSurface.PROJECT_TICKETS, true, "")
+              .configurations();
+
+      assertFalse(
+          service
+              .renderChat(
+                  AgentMcpScope.PROJECT, AgentSurface.PROJECT_TICKETS, pinned, AgentType.CLAUDE)
+              .script()
+              .contains("--append-system-prompt"));
+    }
+
+    @Test
+    void thePermissionModeStopsBeingAnInvariantNobodyChose() {
+      AgentLaunchService service = service();
+      AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
+
+      configurations = seeded();
+      assertTrue(
+          service
+              .renderChat(
+                  AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS, pinned, AgentType.CLAUDE)
+              .script()
+              .contains("--dangerously-skip-permissions"),
+          "seeded as what every launch renders today");
+
+      configurations =
+          AgentSurfaceConfigurations.of(
+              AgentConfigurationDocument.parse(
+                  "{\"version\":1,\"surfaces\":[{\"surface\":\"project.epics\","
+                      + "\"harness\":\"CLAUDE\",\"permissionMode\":\"PROMPT\"}]}",
+                  "test"));
+
+      assertFalse(
+          service
+              .renderChat(
+                  AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS, pinned, AgentType.CLAUDE)
+              .script()
+              .contains("--dangerously-skip-permissions"),
+          "the agent will start asking, which is the point of the knob");
+    }
+
+    @Test
+    void activityTrackingComesPerSurfaceRatherThanPerDaemon() {
+      AgentLaunchService service = service();
+      AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
+
+      // The daemon-wide setting still answers for a container with no document.
+      activityTracking = false;
+      configurations = AgentSurfaceConfigurations.shipped();
+      assertFalse(
+          service
+              .renderChat(
+                  AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS, pinned, AgentType.CLAUDE)
+              .script()
+              .contains("\"Stop\""));
+
+      // With a document, the surface's own value wins over it.
+      configurations = seeded();
+      assertTrue(
+          service
+              .renderChat(
+                  AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS, pinned, AgentType.CLAUDE)
+              .script()
+              .contains("\"Stop\""));
+    }
+
+    @Test
+    void aServerThisDaemonDoesNotServeAtThisScopeRefusesTheLaunch() {
+      // Dropping it silently is the green-while-dead shape: the session looks entirely normal and
+      // simply cannot do half its job. This host serves one server; observability is the workspace
+      // daemon's.
+      AgentLaunchService service = service();
+      AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
+
+      configurations =
+          new SeededConfigurationDocument()
+              .surface(
+                  AgentSurface.PROJECT_EPICS,
+                  true,
+                  "",
+                  SeededConfigurationDocument.server(
+                      "observability", false, true, true, false, List.of()))
+              .configurations();
+
+      InvalidCommandRequestException refusal =
+          assertThrows(
+              InvalidCommandRequestException.class,
+              () ->
+                  service.renderChat(
+                      AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS, pinned, AgentType.CLAUDE));
+
+      assertTrue(refusal.getMessage().contains("observability"), refusal.getMessage());
+      assertTrue(refusal.getMessage().contains("project.epics"), refusal.getMessage());
+    }
+
+    @Test
+    void detachingAServerIsAConfigurationAndNotAnOmission() {
+      // An empty attachment list is a decision; a surface that says nothing about MCP takes the
+      // host's whole mapping. Both must be renderable, or "attach nothing" would be unreachable.
+      AgentLaunchService service = service();
+      AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
+
+      configurations =
+          new SeededConfigurationDocument()
+              .surface(AgentSurface.PROJECT_EPICS, true, "")
+              .configurations();
+
+      String script =
+          service
+              .renderChat(
+                  AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS, pinned, AgentType.CLAUDE)
+              .script();
+
+      assertFalse(script.contains("\"repository\":"), script);
+      assertFalse(
+          script.contains("--mcp-config"),
+          "no servers means no --mcp-config at all, not an empty one");
     }
   }
 }

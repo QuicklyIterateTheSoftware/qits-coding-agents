@@ -59,12 +59,20 @@ class AgentLaunchServiceWorkspaceHostTest {
   private AgentType defaultType;
   private boolean activityTracking;
 
+  /**
+   * What this container was created with. {@link AgentSurfaceConfigurations#shipped()} is a
+   * container born before the configuration document existed, which is what every test but the
+   * equivalence suite runs as.
+   */
+  private AgentSurfaceConfigurations configurations;
+
   @BeforeEach
   void setUp() {
     commands = new Commands();
     loggedIn = true;
     defaultType = AgentType.CLAUDE;
     activityTracking = true;
+    configurations = AgentSurfaceConfigurations.shipped();
   }
 
   // --- fakes ------------------------------------------------------------------------------------
@@ -243,6 +251,11 @@ class AgentLaunchServiceWorkspaceHostTest {
           @Override
           public Optional<String> refinementModel() {
             return Optional.empty();
+          }
+
+          @Override
+          public AgentSurfaceConfigurations surfaceConfigurations() {
+            return configurations;
           }
         };
     CommandStore store = new CommandStore();
@@ -863,7 +876,7 @@ class AgentLaunchServiceWorkspaceHostTest {
       AgentLaunchService service = service();
       AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.KIMI);
 
-      AcpSessionConfig config = service.buildAcpSessionConfig(AgentMcpScope.REPOSITORY, pinned);
+      AcpSessionConfig config = service.buildAcpSessionConfig(AgentMcpScope.REPOSITORY, AgentSurface.WORKSPACE_CHAT, pinned);
 
       assertEquals("/workspace", config.cwd());
       assertEquals(2, config.mcpServers().size());
@@ -888,7 +901,7 @@ class AgentLaunchServiceWorkspaceHostTest {
 
       AcpSessionConfig config =
           service.buildAcpSessionConfig(
-              AgentMcpScope.REPOSITORY, service.pinSession(null, false, AgentType.KIMI));
+              AgentMcpScope.REPOSITORY, AgentSurface.WORKSPACE_CHAT, service.pinSession(null, false, AgentType.KIMI));
 
       List<String> enabled = config.mcpServers().get(0).enabledTools();
       assertTrue(enabled.contains("list_tickets"), enabled.toString());
@@ -909,7 +922,7 @@ class AgentLaunchServiceWorkspaceHostTest {
 
       AcpSessionConfig config =
           service.buildAcpSessionConfig(
-              AgentMcpScope.REPOSITORY, service.pinSession(null, false, AgentType.KIMI));
+              AgentMcpScope.REPOSITORY, AgentSurface.WORKSPACE_CHAT, service.pinSession(null, false, AgentType.KIMI));
 
       List<String> enabled = config.mcpServers().get(0).enabledTools();
       assertTrue(enabled.contains("list_epics"), enabled.toString());
@@ -929,12 +942,12 @@ class AgentLaunchServiceWorkspaceHostTest {
           KIMI_SESSION,
           service
               .buildAcpSessionConfig(
-                  AgentMcpScope.REPOSITORY, service.pinSession(KIMI_SESSION, false, AgentType.KIMI))
+                  AgentMcpScope.REPOSITORY, AgentSurface.WORKSPACE_CHAT, service.pinSession(KIMI_SESSION, false, AgentType.KIMI))
               .resumeSessionId());
       assertNull(
           service
               .buildAcpSessionConfig(
-                  AgentMcpScope.REPOSITORY, service.pinSession(null, false, AgentType.KIMI))
+                  AgentMcpScope.REPOSITORY, AgentSurface.WORKSPACE_CHAT, service.pinSession(null, false, AgentType.KIMI))
               .resumeSessionId());
     }
 
@@ -944,9 +957,172 @@ class AgentLaunchServiceWorkspaceHostTest {
       AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.KIMI);
 
       AcpSessionConfig config =
-          service.buildAcpSessionConfig(AgentMcpScope.REPOSITORY, pinned, true);
+          service.buildAcpSessionConfig(AgentMcpScope.REPOSITORY, AgentSurface.WORKSPACE_CHAT, pinned, true);
 
       assertTrue(config.mcpServers().get(0).url().contains("agentReadOnly=true"));
+    }
+  }
+
+  // --- rendering from the configuration -----------------------------------------------------
+
+  /**
+   * The same equivalence as {@link AgentLaunchServiceProjectHostTest}'s, on the host where it is
+   * hardest: five surfaces, two servers each, a differently ordered pre-approval list, and the four
+   * human surfaces seeded identically because they render identically today. A launch from the
+   * seeded document is the launch from the constants, byte for byte.
+   */
+  @Nested
+  class ConfiguredRendering {
+
+    /** The pair every surface of this host attaches, as its own serversFor builds it. */
+    private static SeededConfigurationDocument withPair(
+        SeededConfigurationDocument document, AgentSurface surface, boolean readOnly) {
+      return document.surface(
+          surface,
+          true,
+          "",
+          SeededConfigurationDocument.server(
+              "repository", true, true, true, readOnly, WorkspaceHostMcpServers.REPOSITORY_TOOLS),
+          // No projectId: qits-observability has no notion of one, and its tool filter hides
+          // everything unless both of its narrowings are present.
+          SeededConfigurationDocument.server(
+              "observability",
+              false,
+              true,
+              true,
+              readOnly,
+              WorkspaceHostMcpServers.READ_ONLY_OBSERVABILITY_TOOLS));
+    }
+
+    private AgentSurfaceConfigurations seeded() {
+      SeededConfigurationDocument document = new SeededConfigurationDocument();
+      for (AgentSurface surface :
+          List.of(
+              AgentSurface.EPIC_CHAT,
+              AgentSurface.EPIC_AGENT,
+              AgentSurface.WORKSPACE_CHAT,
+              AgentSurface.WORKSPACE_AGENT)) {
+        withPair(document, surface, false);
+      }
+      withPair(document, AgentSurface.TICKET_DISPATCH, true);
+      return document.configurations();
+    }
+
+    @Test
+    void allFourHumanSurfacesRenderWhatTheConstantsRendered() {
+      AgentLaunchService service = service();
+
+      for (AgentSurface surface :
+          List.of(
+              AgentSurface.EPIC_CHAT,
+              AgentSurface.EPIC_AGENT,
+              AgentSurface.WORKSPACE_CHAT,
+              AgentSurface.WORKSPACE_AGENT)) {
+        for (AgentType type : List.of(AgentType.CLAUDE, AgentType.KIMI)) {
+          AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, type);
+
+          configurations = AgentSurfaceConfigurations.shipped();
+          LaunchSpec chat = service.renderChat(AgentMcpScope.REPOSITORY, surface, pinned, type);
+          LaunchSpec interactive =
+              service.renderInteractive(AgentMcpScope.REPOSITORY, surface, "seed", pinned, type);
+          AcpSessionConfig acp =
+              service.buildAcpSessionConfig(AgentMcpScope.REPOSITORY, surface, pinned);
+
+          configurations = seeded();
+
+          assertEquals(
+              chat.script(),
+              service.renderChat(AgentMcpScope.REPOSITORY, surface, pinned, type).script(),
+              surface + " chat on " + type);
+          assertEquals(
+              interactive.script(),
+              service
+                  .renderInteractive(AgentMcpScope.REPOSITORY, surface, "seed", pinned, type)
+                  .script(),
+              surface + " interactive on " + type);
+          // Kimi carries its servers protocol-native rather than on the command line, so the
+          // command-line assertion above would not see a moved server there at all.
+          AcpSessionConfig configuredAcp =
+              service.buildAcpSessionConfig(AgentMcpScope.REPOSITORY, surface, pinned);
+          assertEquals(acp.mcpServers().size(), configuredAcp.mcpServers().size());
+          for (int i = 0; i < acp.mcpServers().size(); i++) {
+            assertEquals(acp.mcpServers().get(i).name(), configuredAcp.mcpServers().get(i).name());
+            assertEquals(acp.mcpServers().get(i).url(), configuredAcp.mcpServers().get(i).url());
+            assertEquals(
+                acp.mcpServers().get(i).enabledTools(),
+                configuredAcp.mcpServers().get(i).enabledTools(),
+                "enabledTools is Kimi's whole tool surface, not a pre-approval");
+          }
+        }
+      }
+    }
+
+    @Test
+    void theOrderTheDocumentAttachesInIsTheOrderRendered() {
+      // Load-bearing rather than cosmetic: both harnesses interpolate the serialized server object
+      // into a shell argument the suites assert as a literal, and the pre-approval list is rendered
+      // into one --allowedTools. The seed lists repository before observability because that is the
+      // order this daemon's serversFor returns them in.
+      AgentLaunchService service = service();
+      AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
+
+      configurations = seeded();
+      String script =
+          service
+              .renderChat(
+                  AgentMcpScope.REPOSITORY, AgentSurface.EPIC_CHAT, pinned, AgentType.CLAUDE)
+              .script();
+
+      assertTrue(
+          script.indexOf("\"repository\":") < script.indexOf("\"observability\":"), script);
+    }
+
+    @Test
+    void aDispatchedRunIsFencedByItsConfigurationRatherThanOnlyByItsShape() {
+      // ticket.dispatch is seeded read-only. The shape it launches with is the host's business, so
+      // the fence has to be renderable from the row too — otherwise turning the store on would
+      // depend on which of two call sites a dispatch happens to go through.
+      AgentLaunchService service = service();
+      AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
+
+      configurations = seeded();
+      String script =
+          service
+              .renderChat(
+                  AgentMcpScope.REPOSITORY, AgentSurface.TICKET_DISPATCH, pinned, AgentType.CLAUDE)
+              .script();
+
+      assertEquals(
+          2,
+          script.split("agentReadOnly=true", -1).length - 1,
+          "both servers fenced, the way an unattended run's are");
+    }
+
+    @Test
+    void aSurfaceTheDocumentNeverHeardOfStillLaunches() {
+      // The store may not have been told about a surface this daemon knows. It answers the shipped
+      // constants — the host's whole mapping — rather than failing a configuration lookup.
+      AgentLaunchService service = service();
+      AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
+
+      configurations = AgentSurfaceConfigurations.shipped();
+      String constants =
+          service
+              .renderChat(
+                  AgentMcpScope.REPOSITORY, AgentSurface.EPIC_AGENT, pinned, AgentType.CLAUDE)
+              .script();
+
+      configurations =
+          new SeededConfigurationDocument()
+              .surface(AgentSurface.WORKSPACE_CHAT, true, "")
+              .configurations();
+
+      assertEquals(
+          constants,
+          service
+              .renderChat(
+                  AgentMcpScope.REPOSITORY, AgentSurface.EPIC_AGENT, pinned, AgentType.CLAUDE)
+              .script());
     }
   }
 }

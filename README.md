@@ -39,7 +39,7 @@ interface the host implements:
 | `CheckoutContext` | The branch and commit currently checked out. Nothing else — a daemon's own identity (project id, repo id, workspace id) is its own business, and it declares its own interface extending this one. |
 | `AgentMcpServers` | `List<ScopedMcp> serversFor(AgentMcpScope)` — which MCP servers a scope attaches, each already narrowed, each with its pre-approval list. |
 | `McpEndpoints` | Where an MCP server lives, and which project this container serves. |
-| `AgentDefaults` | The instance-level preferences a launch falls back on: default harness, activity tracking, refinement model. |
+| `AgentDefaults` | The instance-level preferences a launch falls back on: default harness, activity tracking, refinement model — and, since the configuration epic, the mounted per-surface configuration document (`surfaceConfigurations()`, read once at boot from a path the host passes in). |
 | `ActionResolver` | The action table, read from the checkout's own `.qits-config.yml`. |
 | `AgentCommands` | The command-launching surface `AgentLaunchService` spawns through. |
 
@@ -59,6 +59,41 @@ inside a single-quoted shell argument and the renderer does no escaping of its o
 Both hosts' mappings are reproduced as fixtures in this repository's test scope
 (`ProjectHostMcpServers`, `WorkspaceHostMcpServers`) so that both daemons' rendered commands stay
 asserted byte for byte **here**, where the harness now lives.
+
+## What a session runs as
+
+A session is keyed by its **surface** — where in the product it was started from (`AgentSurface`:
+`project.epics`, `project.tickets`, `epic.chat`, `epic.agent`, `workspace.chat`, `workspace.agent`,
+`epic.autonomous`, `ticket.dispatch`). The vocabulary is open: adding a ninth is a constant and a
+shipped default beside it, not a migration. An unknown surface is refused like an unknown scope; a
+*missing* one resolves to what the request's shape implies, and that guess is a dated migration
+crutch rather than a contract.
+
+Each surface's configuration — harness, model, effort, remote control, permission mode, activity
+tracking, system prompt, initial prompt, and which built-in MCP servers attach — is stored and
+edited in qits-projects and mounted into a container as one JSON document when it is created.
+`AgentConfigurationDocument.readFrom(path)` reads it at boot. **Absent is not broken**: no document
+means a container created before this shipped, and the launch falls back to the constants this
+library still ships. A *malformed* one throws at boot naming the offending key.
+
+The line through the MCP wiring is worth stating, because it crosses the `AgentMcpServers` seam:
+
+- the **document** says which servers attach, in which order, with which pre-approval, and whether
+  they are read-only fenced. Policy, edited in one place, travelling with the container;
+- the **host** says how a server key becomes a url at a given `AgentMcpScope`. Addressing, needing
+  the container's own project/repository/workspace ids, which this library deliberately does not
+  have.
+
+So a configured attachment is looked up in what the host offers for the launch's scope. A
+configuration naming a server the host does not serve at that scope **refuses the launch** rather
+than dropping it silently — a session missing a server it was configured with looks entirely normal
+and simply cannot do half its job. The attachment's `narrow*` flags are carried and validated but
+not rendered: honouring them needs a seam that maps a key *plus a narrowing* to a url, and inventing
+a url here is the one thing this module refuses outright.
+
+A container keeps what it was born with. An edit applies to the next container; that is not surfaced
+anywhere, and it is what keeps the launch path a pure local render with no runtime dependency on the
+store.
 
 ## Framework-free, deliberately
 
