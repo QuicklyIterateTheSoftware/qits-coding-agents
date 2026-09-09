@@ -23,14 +23,18 @@ import java.util.List;
  *     {@link AgentLaunchService}, which still takes the request parameter then {@link
  *     AgentDefaults}, because the checkout's own {@code .qits-config.yml} rung sits between them and
  *     is the host's to order
- * @param model the model to pass, or empty for the harness's own. Rendered by task c667e740
- * @param effort the effort level, or empty. Claude only; rendered by task c667e740
+ * @param model the model to pass, or empty for the harness's own. Rendered on both harnesses
+ *     ({@code --model} / {@code -m}); every surface can set one, where before this only prompt
+ *     refinement could
+ * @param effort the effort level, or empty. Claude's {@code --effort}; Kimi has no effort concept at
+ *     all and reports the drop rather than passing an unknown flag — see {@link
+ *     KimiCodeAgent#effort}
  * @param remoteControl whether this surface's remote-control mechanism is enabled. <b>Not validated
  *     against the launch shape</b> — when the knob is on, the flag is set. The seed has it on for
  *     the chat surfaces and off for the interactive ones, which is the opposite of the intuition and
  *     is what the code does: {@code --remote-control} is dropped under {@code --print}, so a chat
- *     enables it over the SDK control channel instead ({@code StreamJsonChatProtocol}). Wired by
- *     task c667e740
+ *     enables it over the SDK control channel instead ({@code StreamJsonChatProtocol}) and an
+ *     interactive launch takes {@code --remote-control "<name>"}. See {@link AgentRemoteControl}
  * @param permissionMode auto-approve or prompt
  * @param activityTracking whether to wire the turn-boundary activity hooks, per surface rather than
  *     per daemon

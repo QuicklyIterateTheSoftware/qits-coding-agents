@@ -106,6 +106,22 @@ public final class AgentSurfaceConfigurations {
     return AgentSurface.PROJECT_TICKETS.equals(surface) ? AgentLaunchService.TICKETS_DESK_PROMPT : "";
   }
 
+  /**
+   * Whether a surface ships with remote control on — <b>true for every shape but the two agent
+   * tabs</b>, which reads backwards and is what the code does.
+   *
+   * <p>A chat has bridged since the day the transport learned to ask for one: {@code
+   * claudeChatProtocol} enabled Remote Control over the SDK control channel on every chat it opened,
+   * because {@code --remote-control} is dropped by the harness under {@code --print}. An interactive
+   * launch, which is the shape the flag was made for, never passed it. So "what a container with no
+   * document rendered before" is: chats bridged, terminals not — and this is that, surface by
+   * surface. The same table is seeded in qits-projects ({@code AgentSurfaceDefaults.shipped}), for
+   * the same reason and with the same two exceptions.
+   */
+  static boolean shippedRemoteControl(AgentSurface surface) {
+    return !AgentSurface.EPIC_AGENT.equals(surface) && !AgentSurface.WORKSPACE_AGENT.equals(surface);
+  }
+
   /** The constants a container with no document renders — see this class's note on each of them. */
   public static AgentSurfaceConfiguration shippedFor(
       AgentSurface surface, AgentType defaultHarness, boolean activityTracking) {
@@ -114,7 +130,7 @@ public final class AgentSurfaceConfigurations {
         defaultHarness == null ? AgentType.CLAUDE : defaultHarness,
         "",
         "",
-        false,
+        shippedRemoteControl(surface),
         // Every launch shape in both daemons calls skipPermissions(), unconditionally.
         AgentPermissionMode.SKIP_PERMISSIONS,
         activityTracking,

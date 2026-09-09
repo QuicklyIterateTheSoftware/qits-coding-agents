@@ -242,7 +242,7 @@ public final class AgentLaunchService {
         type == AgentType.KIMI
             ? process ->
                 new AcpChatProtocol(process, buildAcpSessionConfig(request.scope(), surface, pinned))
-            : claudeChatProtocol(pinned);
+            : claudeChatProtocol(pinned, surface, configurationFor(surface));
 
     Command command =
         commands.launchChat(
@@ -295,7 +295,10 @@ public final class AgentLaunchService {
                     process,
                     buildAcpSessionConfig(
                         AgentMcpScope.REPOSITORY, AgentSurface.EPIC_AUTONOMOUS, pinned, true))
-            : claudeChatProtocol(pinned);
+            : claudeChatProtocol(
+                pinned,
+                AgentSurface.EPIC_AUTONOMOUS,
+                configurationFor(AgentSurface.EPIC_AUTONOMOUS));
     Command command =
         commands.launchChat(
             name,
@@ -535,22 +538,25 @@ public final class AgentLaunchService {
     for (ScopedMcp server : attachedServers(scope, configuration, false)) {
       agent.mcpServer(server.key(), McpServers.httpMcp(server.url()));
     }
-    return withPermissions(
-            withSteering(
-                withSession(withAgentHome(agent, agentType), pinned, configuration), configuration),
-            configuration)
-        .chat();
+    return configured(agent, agentType, pinned, configuration, false).chat();
   }
 
   /**
-   * The Claude chat transport, with Remote Control enabled and named after the checked-out branch —
-   * {@code refining/<slug>}, so a remote session list says which refinement it is looking at instead
-   * of a container hostname. The enable rides the transport rather than the command line because
-   * {@code --remote-control} is dropped by the harness under {@code --print}; see {@link
-   * StreamJsonChatProtocol}. A workspace whose branch is not known yet simply gets no bridge.
+   * The Claude chat transport, carrying the Remote Control enable when the surface's knob is on.
+   *
+   * <p>The enable rides the transport rather than the command line because {@code --remote-control}
+   * is dropped by the harness under {@code --print} — see {@link StreamJsonChatProtocol} — which is
+   * why remote control is a chat-side mechanism here and a flag on the interactive shape, the
+   * opposite way round from the intuition. It used to be unconditional and named after the branch;
+   * it is now the configured knob, named by {@link AgentRemoteControl#sessionName}, and a surface
+   * with the knob off gets no bridge.
    */
-  private ChatProtocolFactory claudeChatProtocol(PinnedSession pinned) {
-    String name = checkout.branch();
+  private ChatProtocolFactory claudeChatProtocol(
+      PinnedSession pinned, AgentSurface surface, AgentSurfaceConfiguration configuration) {
+    String name =
+        configuration.remoteControl()
+            ? AgentRemoteControl.sessionName(surface, checkout == null ? null : checkout.branch())
+            : null;
     return process -> new StreamJsonChatProtocol(process, pinned.commandId(), name);
   }
 
@@ -610,11 +616,7 @@ public final class AgentLaunchService {
     for (ScopedMcp server : attachedServers(scope, configuration, true)) {
       agent.mcpServer(server.key(), McpServers.httpMcp(server.url()));
     }
-    return withPermissions(
-            withSteering(
-                withSession(withAgentHome(agent, agentType), pinned, configuration), configuration),
-            configuration)
-        .chat();
+    return configured(agent, agentType, pinned, configuration, false).chat();
   }
 
   /**
@@ -644,11 +646,44 @@ public final class AgentLaunchService {
     if (initialContext != null && !initialContext.isBlank()) {
       agent.initialContext(initialContext);
     }
-    return withPermissions(
+    return configured(agent, agentType, pinned, configuration, true).start();
+  }
+
+  /**
+   * Everything a surface's configuration puts on the agent, in one place: the credential overlay,
+   * the session lineage, the steering, the harness knobs and the permission mode.
+   *
+   * <p>{@code interactive} decides only where remote control attaches. The knob itself is the
+   * surface's and is <b>not</b> validated against the launch shape — when it is on the mechanism is
+   * used, and which mechanism that is depends on what the shape has: a flag for the REPL, the SDK
+   * control channel for a chat (wired on the transport, not here). See {@link AgentRemoteControl}.
+   */
+  private CodingAgent configured(
+      CodingAgent agent,
+      AgentType agentType,
+      PinnedSession pinned,
+      AgentSurfaceConfiguration configuration,
+      boolean interactive) {
+    CodingAgent configured =
+        withPermissions(
             withSteering(
                 withSession(withAgentHome(agent, agentType), pinned, configuration), configuration),
-            configuration)
-        .start();
+            configuration);
+    // Every surface can set these; before this epic only one refinement flow could set a model and
+    // nothing at all could set an effort level. Empty is the harness's own choice, which is what
+    // every launch has always taken.
+    if (!configuration.model().isBlank()) {
+      configured.model(configuration.model());
+    }
+    if (!configuration.effort().isBlank()) {
+      configured.effort(configuration.effort());
+    }
+    if (interactive && configuration.remoteControl()) {
+      configured.remoteControl(
+          AgentRemoteControl.sessionName(
+              configuration.surface(), checkout == null ? null : checkout.branch()));
+    }
+    return configured;
   }
 
   /**

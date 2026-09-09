@@ -10,6 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import eu.wohlben.qits.agents.acp.AcpSessionConfig;
 import eu.wohlben.qits.commands.AgentSessionRef;
 import eu.wohlben.qits.commands.AgentSessionSource;
+import eu.wohlben.qits.commands.ChatProtocol;
 import eu.wohlben.qits.commands.ChatProtocolFactory;
 import eu.wohlben.qits.commands.Command;
 import eu.wohlben.qits.commands.CommandExitListener;
@@ -26,6 +27,10 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
+import io.vertx.core.json.JsonObject;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -1287,6 +1292,173 @@ class AgentLaunchServiceProjectHostTest {
                   AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS, pinned, AgentType.CLAUDE)
               .script()
               .contains("\"Stop\""));
+    }
+
+    @Test
+    void everySurfaceCanSetAModelAndAnEffortNow() {
+      // Before this, exactly one flow could set a model (prompt refinement) and nothing could set an
+      // effort level at all. Both are now per surface, and both render on both shapes.
+      AgentLaunchService service = service();
+      AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
+
+      configurations = knobs("\"model\":\"haiku\",\"effort\":\"low\"");
+
+      String chat =
+          service
+              .renderChat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS, pinned, AgentType.CLAUDE)
+              .script();
+      String interactive =
+          service
+              .renderInteractive(
+                  AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS, null, pinned, AgentType.CLAUDE)
+              .script();
+
+      assertTrue(chat.contains("--model 'haiku'"), chat);
+      assertTrue(chat.contains("--effort 'low'"), chat);
+      assertTrue(interactive.contains("--model 'haiku'"), interactive);
+      assertTrue(interactive.contains("--effort 'low'"), interactive);
+    }
+
+    @Test
+    void anInteractiveLaunchTakesTheRemoteControlFlagNamedAfterTheSurfaceAndTheBranch() {
+      AgentLaunchService service = service();
+      AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
+
+      configurations = knobs("\"remoteControl\":true");
+      assertTrue(
+          service
+              .renderInteractive(
+                  AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS, null, pinned, AgentType.CLAUDE)
+              .script()
+              .contains("--remote-control 'qits project.epics main'"));
+
+      configurations = knobs("\"remoteControl\":false");
+      assertFalse(
+          service
+              .renderInteractive(
+                  AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS, null, pinned, AgentType.CLAUDE)
+              .script()
+              .contains("--remote-control"),
+          "the knob is what drives it, and it is off");
+    }
+
+    @Test
+    void aChatRendersNoFlagBecauseItsBridgeRidesTheControlChannel() {
+      AgentLaunchService service = service();
+      AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
+
+      configurations = knobs("\"remoteControl\":true");
+
+      assertFalse(
+          service
+              .renderChat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS, pinned, AgentType.CLAUDE)
+              .script()
+              .contains("--remote-control"),
+          "the flag parses under --print and is dropped on the headless branch");
+    }
+
+    @Test
+    void aChatsBridgeIsRaisedOnlyWhenTheKnobIsOn() throws Exception {
+      // The one assertion that reaches the mechanism rather than the render: the transport asks the
+      // harness for a bridge over stdin when the session announces itself. It used to be
+      // unconditional and named after the branch; it is now the surface's knob.
+      configurations = knobs("\"remoteControl\":true");
+      service().launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS));
+      assertEquals(
+          "qits project.epics main",
+          remoteControlNameAskedFor(commands.last().protocolFactory()),
+          "named by surface and branch, not by the container's hostname");
+
+      configurations = knobs("\"remoteControl\":false");
+      service().launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS));
+      assertNull(
+          remoteControlNameAskedFor(commands.last().protocolFactory()),
+          "nothing is asked for, so no bridge is raised");
+    }
+
+    @Test
+    void aKimiSurfaceReportsTheKnobsItCannotRenderRatherThanFailing() {
+      // Kimi has no effort concept and no Remote Control. A configuration that sets either renders
+      // nothing — passing an unknown flag would turn a configuration mistake into a failed launch.
+      defaultType = AgentType.KIMI;
+      AgentLaunchService service = service();
+      AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.KIMI);
+
+      configurations = knobs("\"model\":\"k2\",\"effort\":\"high\",\"remoteControl\":true");
+
+      String script =
+          service
+              .renderInteractive(
+                  AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS, null, pinned, AgentType.KIMI)
+              .script();
+
+      assertTrue(script.contains("-m 'k2'"), script);
+      assertFalse(script.contains("effort"), script);
+      assertFalse(script.contains("remote-control"), script);
+    }
+
+    @Test
+    void nothingInALaunchsEnvironmentDisablesTheFeatureFlagRemoteControlNeeds() {
+      // Remote Control rides a feature-flag evaluation four environment variables switch off. The
+      // image sets none of them; asserting it here is what stops a later "turn off telemetry"
+      // change from taking every bridge down silently.
+      AgentLaunchService service = service();
+      AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
+
+      for (LaunchSpec spec :
+          List.of(
+              service.renderChat(
+                  AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS, pinned, AgentType.CLAUDE),
+              service.renderInteractive(
+                  AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS, null, pinned, AgentType.CLAUDE),
+              service.renderLogin(AgentType.CLAUDE))) {
+        assertEquals(List.of(), AgentRemoteControl.disabledBy(spec.environment()), spec.script());
+      }
+    }
+
+    /** One epics-desk row carrying {@code extraFields}, everything else as it ships. */
+    private AgentSurfaceConfigurations knobs(String extraFields) {
+      return AgentSurfaceConfigurations.of(
+          AgentConfigurationDocument.parse(
+              "{\"version\":1,\"surfaces\":[{\"surface\":\"project.epics\",\"harness\":\"CLAUDE\","
+                  + "\"permissionMode\":\"SKIP_PERMISSIONS\","
+                  + extraFields
+                  + "}]}",
+              "test"));
+    }
+
+    /**
+     * Drives {@code factory}'s protocol against a process that announces {@code system/init} and
+     * echoes its stdin, and answers the session name it asked a bridge for — or null when it asked
+     * for none.
+     */
+    private String remoteControlNameAskedFor(ChatProtocolFactory factory) throws Exception {
+      Process process =
+          new ProcessBuilder(
+                  "bash",
+                  "-c",
+                  "printf '%s\\n' '{\"type\":\"system\",\"subtype\":\"init\"}' ; exec cat")
+              .start();
+      BlockingQueue<String> lines = new LinkedBlockingQueue<>();
+      ChatProtocol protocol = factory.create(process);
+      protocol.start(lines::add, () -> {});
+      try {
+        assertNotNull(lines.poll(10, TimeUnit.SECONDS), "the init line");
+        protocol.sendUser("ping");
+        for (int i = 0; i < 3; i++) {
+          String line = lines.poll(3, TimeUnit.SECONDS);
+          if (line == null) {
+            return null;
+          }
+          if (line.contains("\"remote_control\"")) {
+            return new JsonObject(line).getJsonObject("request").getString("name");
+          }
+        }
+        return null;
+      } finally {
+        protocol.close();
+        process.destroy();
+      }
     }
 
     @Test

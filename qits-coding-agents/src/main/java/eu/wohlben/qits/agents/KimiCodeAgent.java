@@ -53,6 +53,45 @@ public class KimiCodeAgent extends CodingAgent {
    */
   @Override
   public CodingAgent appendSystemPrompt(String text) {
+    if (text != null && !text.isBlank()) {
+      note("Kimi Code has no system-prompt appendix on either channel, so this surface's steering"
+          + " text was not rendered.");
+    }
+    return this;
+  }
+
+  /**
+   * <strong>Kimi Code has no effort concept at all</strong> — no {@code --effort} flag on the CLI
+   * (verified against 0.28.1) and no ACP field for one. A configured effort therefore renders
+   * nothing, and the drop is <em>reported</em> rather than passed as an unknown flag (which the
+   * harness would reject, turning a configuration mistake into a failed launch) or dropped silently
+   * (which would leave an operator reading an effort level on a surface whose sessions never had
+   * one).
+   *
+   * <p>The asymmetry is also why {@link HarnessCapabilities#effortSupported()} is false for this
+   * harness rather than an empty list of Claude's values: the absence is the fact, and the editor
+   * shows no effort control at all for a Kimi surface.
+   */
+  @Override
+  public CodingAgent effort(String effort) {
+    if (effort != null && !effort.isBlank()) {
+      note(
+          "Kimi Code has no effort concept, so the configured effort level '"
+              + effort
+              + "' was not rendered.");
+    }
+    return this;
+  }
+
+  /**
+   * Kimi Code has no Remote Control mechanism — no flag, no control channel, nothing on ACP — so an
+   * enabled knob on a Kimi surface renders nothing and says so, exactly like {@link #effort}.
+   */
+  @Override
+  public CodingAgent remoteControl(String name) {
+    if (name != null && !name.isBlank()) {
+      note("Kimi Code has no Remote Control mechanism, so remote control was not enabled.");
+    }
     return this;
   }
 

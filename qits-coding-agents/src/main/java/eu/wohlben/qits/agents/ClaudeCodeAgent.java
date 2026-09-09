@@ -29,6 +29,15 @@ public class ClaudeCodeAgent extends CodingAgent {
     if (initialContext != null && !initialContext.isBlank()) {
       command.append(' ').append(shellQuote(initialContext));
     }
+    if (remoteControlName != null) {
+      // --remote-control [name], verified against CLI 2.1.226: "Start an interactive session with
+      // Remote Control enabled (optionally named)". Interactive only — the flag parses under
+      // --print and is dropped on the headless branch, which is why the chat shapes enable it over
+      // the control channel instead and never set this field. The name is passed because the
+      // auto-generated one is hostname-derived and every platform session would look alike in the
+      // claude.ai session list; see AgentRemoteControl.
+      command.append(" --remote-control ").append(shellQuote(remoteControlName));
+    }
     appendFlags(command);
     return new LaunchSpec(command.toString(), true, environment);
   }
@@ -72,6 +81,14 @@ public class ClaudeCodeAgent extends CodingAgent {
     }
     if (model != null && !model.isBlank()) {
       command.append(" --model ").append(shellQuote(model));
+    }
+    if (effort != null && !effort.isBlank()) {
+      // --effort <level>, whose --help enumerates (low, medium, high, xhigh, max) — but the launch
+      // renders whatever string the configuration holds rather than checking it against that list.
+      // The levels depend on the model, the list belongs to the binary in the image, and a launch
+      // that second-guessed it would be this platform hardcoding a catalogue again. An unknown
+      // level fails at the harness, where the answer is authoritative.
+      command.append(" --effort ").append(shellQuote(effort));
     }
     if (systemPromptAppendix != null && !systemPromptAppendix.isBlank()) {
       // --append-system-prompt, not --system-prompt: the harness's own prompt is what makes the

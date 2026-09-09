@@ -49,8 +49,38 @@ public abstract class CodingAgent {
   /** Model override for the launched session, or null for the harness default. */
   protected String model;
 
+  /**
+   * How hard the session should think, or null for the harness's own choice. A free string rather
+   * than an enum: the levels belong to the binary in the image (see {@link HarnessCapabilities}),
+   * they differ per model, and a configuration that pins one this platform has never heard of must
+   * still render.
+   */
+  protected String effort;
+
+  /**
+   * The name a Remote Control session is listed under, or null to leave Remote Control off.
+   *
+   * <p>Only the interactive shape has a flag for it ({@code --remote-control "<name>"}); the chat
+   * shapes enable it over the SDK control channel instead, from {@code StreamJsonChatProtocol}, and
+   * never touch this field. See {@link AgentRemoteControl} for why a name is passed at all.
+   */
+  protected String remoteControlName;
+
   /** Whether to run without permission prompts. */
   protected boolean skipPermissions;
+
+  /**
+   * What this harness could not render of what it was configured with — <b>not</b> errors, and not
+   * silence either.
+   *
+   * <p>The two harnesses are genuinely asymmetric: Kimi Code has no effort concept and no
+   * system-prompt appendix, so a surface configured with either renders a command without it. That
+   * is the right rendering and the wrong <em>silence</em>: a Kimi tickets desk that reads as
+   * configured while behaving like the default one is exactly the failure a launch-time asymmetry
+   * must not be allowed to hide. So the drop is collected here, recorded on the launched command
+   * (see {@code AgentLaunchRecord}), and readable afterwards.
+   */
+  protected final List<String> renderNotes = new ArrayList<>();
 
   /**
    * Whether an interactive session renders flat text instead of a full-screen TUI (default false).
@@ -121,6 +151,37 @@ public abstract class CodingAgent {
   public CodingAgent model(String model) {
     this.model = model;
     return this;
+  }
+
+  /**
+   * Sets the session's effort level. Honoured by harnesses that have the concept; {@link
+   * KimiCodeAgent#effort} is the one that does not and says so rather than dropping it silently.
+   */
+  public CodingAgent effort(String effort) {
+    this.effort = effort;
+    return this;
+  }
+
+  /**
+   * Enables Remote Control on an interactive session, listed under {@code name}.
+   *
+   * <p>Honoured only where the harness has a flag for it — {@link ClaudeCodeAgent#start()}. A chat
+   * is not an interactive session and its enable rides the transport instead, so this is never set
+   * on a chat render; a harness with no remote-control mechanism at all reports the drop.
+   */
+  public CodingAgent remoteControl(String name) {
+    this.remoteControlName = name == null || name.isBlank() ? null : name.trim();
+    return this;
+  }
+
+  /** What this harness could not render of what it was configured with — see {@link #renderNotes}. */
+  public List<String> renderNotes() {
+    return List.copyOf(renderNotes);
+  }
+
+  /** Records one such drop. Never a credential and never a whole prompt — a sentence a human reads. */
+  protected void note(String note) {
+    renderNotes.add(note);
   }
 
   /** Overlays an environment variable on the launched process. */

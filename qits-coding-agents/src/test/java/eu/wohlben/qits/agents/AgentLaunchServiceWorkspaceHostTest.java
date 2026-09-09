@@ -979,7 +979,11 @@ class AgentLaunchServiceWorkspaceHostTest {
         SeededConfigurationDocument document, AgentSurface surface, boolean readOnly) {
       return document.surface(
           surface,
-          true,
+          // Remote control as the store seeds it: on for every chat-shaped surface, off for the two
+          // agent tabs. That reads backwards and is what the code does — a chat has bridged over the
+          // SDK control channel since the transport learned to ask, and the interactive shape, which
+          // is the one the flag was made for, never passed it.
+          AgentSurfaceConfigurations.shippedRemoteControl(surface),
           "",
           SeededConfigurationDocument.server(
               "repository", true, true, true, readOnly, WorkspaceHostMcpServers.REPOSITORY_TOOLS),
