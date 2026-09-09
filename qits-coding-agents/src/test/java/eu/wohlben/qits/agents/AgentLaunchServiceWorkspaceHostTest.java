@@ -802,14 +802,58 @@ class AgentLaunchServiceWorkspaceHostTest {
     }
 
     @Test
-    void aSignedOutAgentRedirectsToTheLoginTerminal() {
+    void aSignedOutAgentIsRefusedRatherThanSwappedForALoginTerminal() {
+      // THE behaviour this feature removes. The three launch paths used to answer launchLogin's
+      // bare REPL, and the caller attached to it exactly as it would to a real session: you asked
+      // for a chat about an epic, got a login terminal, and nothing in the answer said so.
       loggedIn = false;
 
-      service().launchChat(chat(AgentMcpScope.REPOSITORY));
+      AgentNotSignedInException refused =
+          assertThrows(
+              AgentNotSignedInException.class, () -> service().launchChat(chat(AgentMcpScope.REPOSITORY)));
 
-      assertEquals("Claude sign-in", commands.last().name());
-      assertEquals(CommandKind.TERMINAL, commands.last().kind());
-      assertTrue(commands.last().interactive(), "the operator finishes OAuth over a real PTY");
+      assertEquals(AgentType.CLAUDE, refused.harness());
+      assertTrue(refused.getMessage().contains("Claude Code"), refused.getMessage());
+      assertTrue(refused.getMessage().contains("sign-in terminal"), "it names where to sign in");
+      assertTrue(commands.launches.isEmpty(), "and nothing at all was launched");
+    }
+
+    @Test
+    void theUnattendedPathsFailLoudlyRatherThanStartingAPromptNobodyWatches() {
+      // A dispatch that "started an agent" which is actually a login prompt is green-while-dead:
+      // the caller reports success, the container sits at a sign-in screen, the work never happens.
+      loggedIn = false;
+
+      assertThrows(
+          AgentNotSignedInException.class, () -> service().launchAutonomous("Composed run"));
+      assertThrows(
+          AgentNotSignedInException.class,
+          () ->
+              service()
+                  .launch(
+                      new AgentLaunchRequest(
+                          AgentMcpScope.REPOSITORY,
+                          null,
+                          AgentLaunchMode.INTERACTIVE,
+                          null,
+                          null,
+                          false,
+                          false,
+                          null)));
+      assertTrue(commands.launches.isEmpty());
+    }
+
+    @Test
+    void theLoginTerminalStaysReachableOnItsOwn() {
+      // Somebody has to complete the OAuth once per credential volume. What went is the
+      // substitution, not the door.
+      loggedIn = false;
+
+      Command login = service().launchLogin(AgentType.CLAUDE);
+
+      assertEquals("Claude sign-in", login.actionName());
+      assertEquals(CommandKind.TERMINAL, login.kind());
+      assertTrue(login.interactive(), "the operator finishes OAuth over a real PTY");
       assertTrue(commands.chatSends.isEmpty(), "nothing is seeded into a login terminal");
     }
 

@@ -227,12 +227,11 @@ public final class AgentLaunchService {
     AgentType type = resolveHarness(request.resumeSessionId(), request.agentType());
 
     // The agent cannot authenticate until an operator has signed in on the shared credential
-    // volume. When it hasn't, launch an interactive agent REPL terminal instead — the caller
-    // redirects to its command page (a real PTY), the operator finishes OAuth through the REPL
-    // onboarding there, and the next launch (this container or any other, same volume) proceeds.
-    if (!authStatus.isLoggedIn(type)) {
-      return launchLogin(type);
-    }
+    // volume. When nobody has, this REFUSES and says so — it does not quietly become a login
+    // terminal, which is what it used to do: you asked for a chat about an epic, got a bare REPL,
+    // and nothing in the answer said so. The caller knows what it was trying to open and offers
+    // launchLogin as a deliberate next step.
+    requireSignedIn(type);
 
     AgentSurface surface = request.surfaceOrDefault();
     PinnedSession pinned = pinSession(request.resumeSessionId(), request.fork(), type);
@@ -277,9 +276,10 @@ public final class AgentLaunchService {
   public Command launchAutonomous(String name) {
     // Composed flows carry no per-launch choice, so they resolve the default harness.
     AgentType type = defaults.defaultAgentType();
-    if (!authStatus.isLoggedIn(type)) {
-      return launchLogin(type);
-    }
+    // Nobody is watching a composed run, so a login terminal here would be the green-while-dead
+    // shape outright: the dispatch reports it started an agent, the container sits at a sign-in
+    // screen, and the work never happens. It fails loudly instead.
+    requireSignedIn(type);
 
     PinnedSession pinned = pinSession(null, false, type);
     // Its own surface rather than the epics desk's. This is a different session from a human's
@@ -334,9 +334,7 @@ public final class AgentLaunchService {
     if (type == AgentType.KIMI && request.fork()) {
       throw new InvalidCommandRequestException("fork is not supported by Kimi Code");
     }
-    if (!authStatus.isLoggedIn(type)) {
-      return launchLogin(type);
-    }
+    requireSignedIn(type);
 
     AgentSurface surface = request.surfaceOrDefault();
     PinnedSession pinned = pinSession(request.resumeSessionId(), request.fork(), type);
@@ -446,8 +444,12 @@ public final class AgentLaunchService {
    * Launches an interactive agent login terminal (a normal PTY command, kind {@code TERMINAL}) so an
    * operator can complete the one-time sign-in (Claude: OAuth through the REPL onboarding; Kimi: the
    * device-code flow). Writes to the shared credential volume, so it signs in every container at
-   * once. Returned by the launch paths when the agent isn't signed in yet; the caller redirects to
-   * its terminal.
+   * once.
+   *
+   * <p><b>A door, not a fallback.</b> It used to be what the three launch paths returned when the
+   * harness was signed out, which made every one of them able to answer with a session nobody asked
+   * for. They refuse now (see {@link #requireSignedIn}) and this stays exactly where it was, opened
+   * deliberately by a caller that tells the user what it is.
    */
   public Command launchLogin(AgentType agentType) {
     LaunchSpec spec = renderLogin(agentType);
@@ -468,6 +470,28 @@ public final class AgentLaunchService {
         null,
         null,
         AgentLaunchMetadata.of(agentType.name(), null));
+  }
+
+  /**
+   * Refuses this launch when nobody has signed the harness in on the shared credential volume.
+   *
+   * <p>The one place the auth gate is applied, and the change is what it does with the answer: the
+   * three call sites used to <em>substitute</em> {@link #launchLogin}'s bare REPL for the session
+   * that was asked for. The swap was invisible — the caller received a command and attached to it,
+   * exactly as it would for a real session — so a user could not tell a signed-out platform from a
+   * working one, and an unattended dispatch reported that it had started an agent when it had
+   * started a sign-in prompt nobody would ever look at.
+   *
+   * <p>Asked at launch, and deliberately not read off the capability report: that report is taken
+   * once at container start and an operator can sign in a minute later, so a cached answer is a fine
+   * <em>display</em> and a wrong gate.
+   *
+   * @throws AgentNotSignedInException naming the harness, for a caller to turn into its own answer
+   */
+  private void requireSignedIn(AgentType agentType) {
+    if (!authStatus.isLoggedIn(agentType)) {
+      throw new AgentNotSignedInException(agentType);
+    }
   }
 
   /** Renders the interactive login command with the shared-volume credential overlay. */

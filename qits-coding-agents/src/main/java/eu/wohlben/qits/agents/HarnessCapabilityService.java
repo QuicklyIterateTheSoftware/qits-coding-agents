@@ -14,7 +14,7 @@ import java.util.Map;
  * harness and the credential volume, not of a surface — one sign-in serves every container on the
  * volume — so it belongs in the same answer as the rest of what a harness can do right now, and it
  * reaches the editor the same way. That fold-in is also what let the launch paths stop <em>acting</em>
- * on it: a launch against an unauthenticated harness refuses and names the reason (see {@code
+ * on it: a launch against an unauthenticated harness refuses and names the reason (see {@link
  * AgentNotSignedInException}) instead of silently becoming a login terminal.
  *
  * <p><b>Run once, at container start, off the request path.</b> Each report spawns one or two
