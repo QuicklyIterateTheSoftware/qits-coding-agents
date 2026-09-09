@@ -648,13 +648,15 @@ public final class AgentLaunchService {
   }
 
   /**
-   * The system-prompt appendix a surface steers with, or {@code null} for one that steers with
-   * nothing. The epics desk is steered by the tools it was given and by the container it runs in,
+   * The system-prompt appendix a surface <em>ships</em> with, or {@code null} for one that steers
+   * with nothing — the fallback for a container born without a configuration document. The epics
+   * desk is steered by the tools it was given and by the container it runs in,
    * which is how this whole surface worked before there was a second desk; only the tickets desk has
    * to say what it is, because it shares every one of those tools with the desk beside it.
    */
   static String systemPromptFor(AgentSurface surface) {
-    return AgentSurface.PROJECT_TICKETS.equals(surface) ? TICKETS_DESK_PROMPT : null;
+    String shipped = AgentSurfaceConfigurations.shippedSystemPrompt(surface);
+    return shipped.isEmpty() ? null : shipped;
   }
 
   /**
