@@ -1167,16 +1167,15 @@ public final class AgentLaunchService {
   }
 
   /**
-   * The command's name — and, for {@link AgentSurface#PROJECT_TICKETS}, still a
-   * <strong>cross-repo contract</strong> for one more release. The frontend segregates a project's
-   * sessions into the two desks by matching {@code " (tickets desk)"} in this name, because until now
-   * a command carried no surface field of its own.
+   * The command's name — <strong>a label, and nothing more</strong>.
    *
-   * <p><b>The name deliberately does not move with the surface.</b> The command now reports {@code
-   * agentSurface}, which is what lets the frontend stop parsing a display string — but the two sides
-   * ship separately, and renaming here in the same release would move every ticket session into the
-   * epics list of a frontend that has not shipped yet. Task 46e32cb3 deletes the string match, and
-   * the name becomes free to change once it has.
+   * <p>It used to be a cross-repo contract: the projects frontend segregated a project's sessions
+   * into its two desks by matching {@code " (tickets desk)"} in this string, because a command
+   * carried no surface field of its own, and renaming the label here would silently have moved every
+   * ticket session into the epics list. That agreement is gone — a command reports {@code
+   * agentSurface} and the frontend sorts by it (task 46e32cb3 deleted the match) — so <b>nothing
+   * parses this name any more and it is free to change</b>. The text below is kept only because
+   * there is no reason to rename what people already recognise, not because anything depends on it.
    *
    * <p>Every other surface keeps the scope-derived names it has always had, so nothing that was
    * running gets renamed. The surface wins over the scope where they would both speak: a tickets
