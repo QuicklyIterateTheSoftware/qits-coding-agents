@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>eu.wohlben.qits</groupId>
+        <artifactId>qits-agents</artifactId>
+        <version>2026.909.40000</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>qits-coding-agents</artifactId>
+    <name>qits-agents :: agents</name>
+
+    <!-- The coding-agent harnesses (Claude Code, Kimi) and everything that reads their state:
+         launch-spec rendering, the ACP transport, session lineage, transcript reads, plugin install,
+         prompt refinement and auth status.
+
+         The union of two copies. What each side had alone came with it: AgentDesk and its tickets
+         steering from the projects copy, AgentPluginService/InstalledPluginDto/PromptRefinementService
+         from the workspace copy, and AgentMcpScope's ACTIONS value from the workspace copy beside
+         PROJECT and REPOSITORY from both.
+
+         What is NOT here is what made the two copies different rather than merely diverged: the
+         scope-to-server mapping. The projects daemon attaches exactly one MCP server (`repository`),
+         the workspace daemon attaches three (`repository`, `observability`, `actions`), each with
+         its own narrowing and its own pre-approval list, and those are policy about which product
+         the session is inside. AgentMcpServers is that seam; AgentLaunchService renders whatever it
+         is handed and has stopped knowing.
+
+         Depends on qits-commands because launching an agent *is* launching a command: the
+         AgentLaunchService -> CommandService direction, never the other way round. Framework-free
+         for the same native-image reason as its sibling, and with no resources directory at all —
+         which is why a steering prompt is a Java text block a test asserts byte for byte.
+
+         The workspace copy also declared `workspace-daemon-files`. Nothing in the moved code
+         imports it (checked class by class), so it did not come along: a dependency that only the
+         pom knows about would have made this library need one daemon's jar to build. -->
+
+    <dependencies>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-commands</artifactId>
+        </dependency>
+        <dependency>
+            <!-- io.vertx.core.json only: the ACP wire, the harness transcript JSONL and the plugin
+                 manifests are all JSON. Same reasoning as qits-commands. -->
+            <groupId>io.vertx</groupId>
+            <artifactId>vertx-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <artifactId>maven-compiler-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <artifactId>maven-surefire-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+</project>
