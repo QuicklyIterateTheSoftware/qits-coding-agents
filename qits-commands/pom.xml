@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>eu.wohlben.qits</groupId>
+        <artifactId>qits-agents</artifactId>
+        <version>2026.909.40000</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>qits-commands</artifactId>
+    <name>qits-agents :: commands</name>
+
+    <!-- Launching and supervising processes in a container's checkout: the PTY, the command
+         registry and store, the log buffer and the chat seams.
+
+         Driving a process is the same job whatever the container is scoped to, which is why both
+         daemons had a byte-near-identical copy of this module and why one copy now serves both. The
+         only thing that was ever genuinely per-daemon here is the identity seam — who this checkout
+         is — and that is CheckoutContext, an interface the host implements.
+
+         Framework-free: no Quarkus, no CDI, no JAX-RS and no Jackson, so it links into the GraalVM
+         native image with nothing to register and stays plain unit-testable. The host daemon
+         constructs these classes and serves them over its own API.
+
+         The one framework dependency is vertx-core, and only for io.vertx.core.json: the
+         stream-json chat transport has to parse the harness's line-delimited JSON, and this is
+         already the JSON library both daemons carry. Adding Jackson for it would put a second JSON
+         stack in the native image.
+
+         It does carry one resources directory, and only one: the GraalVM native-image metadata that
+         pins ForeignPty to run-time initialization. That is build metadata for the consumer's native
+         image, not configuration this module reads. -->
+
+    <dependencies>
+        <dependency>
+            <groupId>io.vertx</groupId>
+            <artifactId>vertx-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <artifactId>maven-compiler-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <artifactId>maven-surefire-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+</project>
