@@ -1,5 +1,6 @@
 package eu.wohlben.qits.agents;
 
+import eu.wohlben.qits.commands.AgentLaunchMetadata;
 import eu.wohlben.qits.commands.AgentSessionRef;
 import eu.wohlben.qits.commands.ChatProtocolFactory;
 import eu.wohlben.qits.commands.Command;
@@ -33,18 +34,9 @@ public final class CommandsAgentCommands implements AgentCommands {
       String commandId,
       AgentSessionRef agentSession,
       CommandExitListener onExit,
-      String agentType,
-      String agentSurface) {
+      AgentLaunchMetadata agent) {
     return commands.launchAgent(
-        name,
-        script,
-        interactive,
-        environment,
-        commandId,
-        agentSession,
-        onExit,
-        agentType,
-        agentSurface);
+        name, script, interactive, environment, commandId, agentSession, onExit, agent);
   }
 
   @Override
@@ -56,18 +48,9 @@ public final class CommandsAgentCommands implements AgentCommands {
       AgentSessionRef agentSession,
       CommandExitListener onExit,
       ChatProtocolFactory protocolFactory,
-      String agentType,
-      String agentSurface) {
+      AgentLaunchMetadata agent) {
     return commands.launchChat(
-        name,
-        script,
-        environment,
-        commandId,
-        agentSession,
-        onExit,
-        protocolFactory,
-        agentType,
-        agentSurface);
+        name, script, environment, commandId, agentSession, onExit, protocolFactory, agent);
   }
 
   @Override

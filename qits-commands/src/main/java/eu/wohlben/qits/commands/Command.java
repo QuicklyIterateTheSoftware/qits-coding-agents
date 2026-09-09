@@ -33,6 +33,12 @@ import java.util.List;
  *     key), so a reader can tell two sessions apart without parsing {@link #actionName}; null for
  *     non-agent commands, for the sign-in terminal, and for every agent command launched before the
  *     surface became a value that travels
+ * @param agentLaunchRecord what the session was resolved to run as, as JSON — the harness, model,
+ *     effort, permission mode, remote control and attached MCP servers the launch actually rendered.
+ *     Null for non-agent commands and for every agent command launched before a launch recorded
+ *     itself. It is what makes "a container keeps the document it was born with, and an edit applies
+ *     to the next one" a safe rule rather than an opaque one: the store can be edited at any time,
+ *     so a session that behaved oddly last week cannot be read off what the store holds now
  * @param launchedAt when the process was spawned
  * @param finishedAt when it ended; null while running
  * @param agentSessions the ordered agent-session lineage; empty for non-agent commands
@@ -50,6 +56,7 @@ public record Command(
     boolean interactive,
     String agentType,
     String agentSurface,
+    String agentLaunchRecord,
     Instant launchedAt,
     Instant finishedAt,
     List<AgentSessionRef> agentSessions) {
@@ -104,6 +111,35 @@ public record Command(
       String agentType,
       String agentSurface,
       Instant launchedAt) {
+    return running(
+        id,
+        kind,
+        branch,
+        commitHash,
+        actionId,
+        actionName,
+        executeScript,
+        interactive,
+        agentType,
+        agentSurface,
+        null,
+        launchedAt);
+  }
+
+  /** A freshly spawned command, recording what the launch resolved to run as. */
+  public static Command running(
+      String id,
+      CommandKind kind,
+      String branch,
+      String commitHash,
+      String actionId,
+      String actionName,
+      String executeScript,
+      boolean interactive,
+      String agentType,
+      String agentSurface,
+      String agentLaunchRecord,
+      Instant launchedAt) {
     return new Command(
         id,
         kind,
@@ -117,6 +153,7 @@ public record Command(
         interactive,
         agentType,
         agentSurface,
+        agentLaunchRecord,
         launchedAt,
         null,
         List.of());
@@ -137,6 +174,7 @@ public record Command(
         interactive,
         agentType,
         agentSurface,
+        agentLaunchRecord,
         launchedAt,
         at,
         agentSessions);
@@ -167,6 +205,7 @@ public record Command(
         interactive,
         agentType,
         agentSurface,
+        agentLaunchRecord,
         launchedAt,
         finishedAt,
         grown);

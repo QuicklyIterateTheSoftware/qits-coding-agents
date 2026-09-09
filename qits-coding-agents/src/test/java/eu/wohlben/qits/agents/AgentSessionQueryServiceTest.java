@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import eu.wohlben.qits.commands.AgentLaunchMetadata;
 import eu.wohlben.qits.commands.AgentSessionRef;
 import eu.wohlben.qits.commands.AgentSessionSource;
 import eu.wohlben.qits.commands.CommandKind;
@@ -137,7 +138,16 @@ class AgentSessionQueryServiceTest {
   @Test
   void nonAgentCommandsContributeNoNodes() {
     lifecycle.createRunning(
-        "main", "abc", "build", "Build", "make", false, CommandKind.TERMINAL, "c1", null, null);
+        "main",
+        "abc",
+        "build",
+        "Build",
+        "make",
+        false,
+        CommandKind.TERMINAL,
+        "c1",
+        null,
+        AgentLaunchMetadata.NONE);
 
     assertTrue(service.sessionTree().isEmpty());
   }

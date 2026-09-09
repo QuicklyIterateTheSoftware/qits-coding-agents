@@ -77,8 +77,7 @@ public final class CommandService {
       CommandKind kind,
       String commandId,
       AgentSessionRef agentSession,
-      String agentType,
-      String agentSurface) {
+      AgentLaunchMetadata agent) {
 
     static LaunchDescriptor of(ActionResolver.ResolvedAction action) {
       return new LaunchDescriptor(
@@ -90,8 +89,7 @@ public final class CommandService {
           CommandKind.TERMINAL,
           null,
           null,
-          null,
-          null);
+          AgentLaunchMetadata.NONE);
     }
   }
 
@@ -157,6 +155,31 @@ public final class CommandService {
       CommandExitListener extraExitListener,
       String agentType,
       String agentSurface) {
+    return launchAgent(
+        name,
+        script,
+        interactive,
+        environment,
+        commandId,
+        agentSession,
+        extraExitListener,
+        AgentLaunchMetadata.of(agentType, agentSurface));
+  }
+
+  /**
+   * {@link #launchAgent} recording what the launch was resolved to run as — see {@link
+   * AgentLaunchMetadata}. One parameter object rather than three more positional arguments, which
+   * takes this signature's arity down rather than up.
+   */
+  public Command launchAgent(
+      String name,
+      String script,
+      boolean interactive,
+      Map<String, String> environment,
+      String commandId,
+      AgentSessionRef agentSession,
+      CommandExitListener extraExitListener,
+      AgentLaunchMetadata agent) {
     Prepared prepared =
         prepare(
             new LaunchDescriptor(
@@ -168,8 +191,7 @@ public final class CommandService {
                 CommandKind.TERMINAL,
                 commandId,
                 agentSession,
-                agentType,
-                agentSurface));
+                agent));
     registry.spawn(
         prepared.command().id(),
         prepared.command().executeScript(),
@@ -217,6 +239,27 @@ public final class CommandService {
       ChatProtocolFactory protocolFactory,
       String agentType,
       String agentSurface) {
+    return launchChat(
+        name,
+        script,
+        environment,
+        commandId,
+        agentSession,
+        extraExitListener,
+        protocolFactory,
+        AgentLaunchMetadata.of(agentType, agentSurface));
+  }
+
+  /** {@link #launchChat} recording what the launch was resolved to run as. */
+  public Command launchChat(
+      String name,
+      String script,
+      Map<String, String> environment,
+      String commandId,
+      AgentSessionRef agentSession,
+      CommandExitListener extraExitListener,
+      ChatProtocolFactory protocolFactory,
+      AgentLaunchMetadata agent) {
     Prepared prepared =
         prepare(
             new LaunchDescriptor(
@@ -228,8 +271,7 @@ public final class CommandService {
                 CommandKind.CHAT,
                 commandId,
                 agentSession,
-                agentType,
-                agentSurface));
+                agent));
     registry.spawnChat(
         prepared.command().id(),
         prepared.command().executeScript(),
@@ -271,8 +313,7 @@ public final class CommandService {
             descriptor.kind(),
             descriptor.commandId(),
             descriptor.agentSession(),
-            descriptor.agentType(),
-            descriptor.agentSurface());
+            descriptor.agent());
 
     Map<String, String> env = new HashMap<>();
     env.put("TERM", "xterm-256color");

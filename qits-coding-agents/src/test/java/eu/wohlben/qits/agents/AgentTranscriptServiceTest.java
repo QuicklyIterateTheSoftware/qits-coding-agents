@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import eu.wohlben.qits.agents.json.Json;
+import eu.wohlben.qits.commands.AgentLaunchMetadata;
 import eu.wohlben.qits.commands.AgentSessionRef;
 import eu.wohlben.qits.commands.AgentSessionSource;
 import eu.wohlben.qits.commands.CommandKind;
@@ -265,7 +266,16 @@ class AgentTranscriptServiceTest {
   @Test
   void aNonAgentCommandIsNotSwept() {
     lifecycle.createRunning(
-        "main", "abc", "build", "Build", "make", false, CommandKind.TERMINAL, COMMAND, null, null);
+        "main",
+        "abc",
+        "build",
+        "Build",
+        "make",
+        false,
+        CommandKind.TERMINAL,
+        COMMAND,
+        null,
+        AgentLaunchMetadata.NONE);
 
     service.sweep(COMMAND, service.configDir(AgentType.CLAUDE));
 
@@ -285,7 +295,7 @@ class AgentTranscriptServiceTest {
         CommandKind.CHAT,
         COMMAND,
         new AgentSessionRef(SESSION, AgentSessionSource.PINNED, null, null, Instant.now()),
-        null);
+        AgentLaunchMetadata.NONE);
 
     assertEquals(
         AgentType.CLAUDE,

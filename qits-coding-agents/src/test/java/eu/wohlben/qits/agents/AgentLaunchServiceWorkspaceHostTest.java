@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import eu.wohlben.qits.agents.acp.AcpSessionConfig;
+import eu.wohlben.qits.commands.AgentLaunchMetadata;
 import eu.wohlben.qits.commands.AgentSessionRef;
 import eu.wohlben.qits.commands.AgentSessionSource;
 import eu.wohlben.qits.commands.ChatProtocolFactory;
@@ -92,8 +93,7 @@ class AgentLaunchServiceWorkspaceHostTest {
         String commandId,
         AgentSessionRef session,
         ChatProtocolFactory protocolFactory,
-        String agentType,
-        String agentSurface,
+        AgentLaunchMetadata agent,
         CommandKind kind) {}
 
     private Launch last() {
@@ -111,8 +111,9 @@ class AgentLaunchServiceWorkspaceHostTest {
           launch.name(),
           launch.script(),
           launch.interactive(),
-          launch.agentType(),
-          launch.agentSurface(),
+          launch.agent().agentType(),
+          launch.agent().agentSurface(),
+          launch.agent().launchRecord(),
           Instant.now());
     }
 
@@ -125,8 +126,7 @@ class AgentLaunchServiceWorkspaceHostTest {
         String commandId,
         AgentSessionRef agentSession,
         CommandExitListener onExit,
-        String agentType,
-        String agentSurface) {
+        AgentLaunchMetadata agent) {
       return record(
           new Launch(
               name,
@@ -136,8 +136,7 @@ class AgentLaunchServiceWorkspaceHostTest {
               commandId,
               agentSession,
               null,
-              agentType,
-              agentSurface,
+              agent,
               CommandKind.TERMINAL));
     }
 
@@ -150,8 +149,7 @@ class AgentLaunchServiceWorkspaceHostTest {
         AgentSessionRef agentSession,
         CommandExitListener onExit,
         ChatProtocolFactory protocolFactory,
-        String agentType,
-        String agentSurface) {
+        AgentLaunchMetadata agent) {
       return record(
           new Launch(
               name,
@@ -161,8 +159,7 @@ class AgentLaunchServiceWorkspaceHostTest {
               commandId,
               agentSession,
               protocolFactory,
-              agentType,
-              agentSurface,
+              agent,
               CommandKind.CHAT));
     }
 
@@ -656,7 +653,7 @@ class AgentLaunchServiceWorkspaceHostTest {
                       false,
                       AgentType.CLAUDE));
 
-      assertEquals("KIMI", commands.last().agentType(), "the session's harness wins");
+      assertEquals("KIMI", commands.last().agent().agentType(), "the session's harness wins");
       assertNotNull(command);
     }
 
@@ -681,7 +678,7 @@ class AgentLaunchServiceWorkspaceHostTest {
 
       assertEquals("Claude Code (actions + repository MCP)", commands.last().name());
       assertEquals(CommandKind.CHAT, commands.last().kind());
-      assertEquals("CLAUDE", commands.last().agentType());
+      assertEquals("CLAUDE", commands.last().agent().agentType());
     }
 
     @Test

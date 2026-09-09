@@ -1,5 +1,6 @@
 package eu.wohlben.qits.agents;
 
+import eu.wohlben.qits.commands.AgentLaunchMetadata;
 import eu.wohlben.qits.commands.AgentSessionRef;
 import eu.wohlben.qits.commands.ChatProtocolFactory;
 import eu.wohlben.qits.commands.Command;
@@ -25,8 +26,9 @@ public interface AgentCommands {
   /**
    * Spawns an interactive PTY agent command (kind {@code TERMINAL}).
    *
-   * <p>{@code agentSurface} is {@link AgentSurface#key()} — recorded on the command so the launch's
-   * answer says which surface it is. Null for the sign-in terminal, which is nobody's surface.
+   * <p>{@code agent} carries the harness, the surface ({@link AgentSurface#key()}) and the record of
+   * what this launch was resolved to run as. The sign-in terminal names no surface and no record: it
+   * is nobody's surface and it renders nobody's configuration.
    */
   Command launchAgent(
       String name,
@@ -36,10 +38,9 @@ public interface AgentCommands {
       String commandId,
       AgentSessionRef agentSession,
       CommandExitListener onExit,
-      String agentType,
-      String agentSurface);
+      AgentLaunchMetadata agent);
 
-  /** Spawns a pipe-driven chat command (kind {@code CHAT}), recording its surface. */
+  /** Spawns a pipe-driven chat command (kind {@code CHAT}), recording the same. */
   Command launchChat(
       String name,
       String script,
@@ -48,8 +49,7 @@ public interface AgentCommands {
       AgentSessionRef agentSession,
       CommandExitListener onExit,
       ChatProtocolFactory protocolFactory,
-      String agentType,
-      String agentSurface);
+      AgentLaunchMetadata agent);
 
   /** Delivers a user turn to a running chat. */
   boolean chatSend(String commandId, String text);

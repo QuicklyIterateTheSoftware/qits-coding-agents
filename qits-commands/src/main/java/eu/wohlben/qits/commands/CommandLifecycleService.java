@@ -83,6 +83,36 @@ public final class CommandLifecycleService {
       AgentSessionRef initialAgentSession,
       String agentType,
       String agentSurface) {
+    return createRunning(
+        branch,
+        commitHash,
+        actionId,
+        actionName,
+        executeScript,
+        interactive,
+        kind,
+        commandId,
+        initialAgentSession,
+        AgentLaunchMetadata.of(agentType, agentSurface));
+  }
+
+  /**
+   * {@link #createRunning} recording the whole of what a launch was: its harness, its surface, and
+   * what it was resolved to run as. The launch record is written with the command rather than after
+   * it, so the store never holds an agent command whose configuration is a moment behind it.
+   */
+  public Command createRunning(
+      String branch,
+      String commitHash,
+      String actionId,
+      String actionName,
+      String executeScript,
+      boolean interactive,
+      CommandKind kind,
+      String commandId,
+      AgentSessionRef initialAgentSession,
+      AgentLaunchMetadata agent) {
+    AgentLaunchMetadata metadata = agent == null ? AgentLaunchMetadata.NONE : agent;
     Command command =
         Command.running(
             commandId != null ? commandId : UUID.randomUUID().toString(),
@@ -93,8 +123,9 @@ public final class CommandLifecycleService {
             actionName,
             executeScript,
             interactive,
-            agentType,
-            agentSurface,
+            metadata.agentType(),
+            metadata.agentSurface(),
+            metadata.launchRecord(),
             Instant.now());
     if (initialAgentSession != null) {
       command = command.withSession(initialAgentSession);
@@ -180,6 +211,7 @@ public final class CommandLifecycleService {
         command.interactive(),
         command.agentType(),
         command.agentSurface(),
+        command.agentLaunchRecord(),
         command.launchedAt(),
         command.finishedAt(),
         sessions);

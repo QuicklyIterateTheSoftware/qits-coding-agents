@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import eu.wohlben.qits.agents.acp.AcpSessionConfig;
+import eu.wohlben.qits.commands.AgentLaunchMetadata;
 import eu.wohlben.qits.commands.AgentSessionRef;
 import eu.wohlben.qits.commands.AgentSessionSource;
 import eu.wohlben.qits.commands.ChatProtocol;
@@ -113,8 +114,7 @@ class AgentLaunchServiceProjectHostTest {
         String commandId,
         AgentSessionRef session,
         ChatProtocolFactory protocolFactory,
-        String agentType,
-        String agentSurface,
+        AgentLaunchMetadata agent,
         CommandKind kind) {}
 
     private Launch last() {
@@ -132,8 +132,9 @@ class AgentLaunchServiceProjectHostTest {
           launch.name(),
           launch.script(),
           launch.interactive(),
-          launch.agentType(),
-          launch.agentSurface(),
+          launch.agent().agentType(),
+          launch.agent().agentSurface(),
+          launch.agent().launchRecord(),
           Instant.now());
     }
 
@@ -146,8 +147,7 @@ class AgentLaunchServiceProjectHostTest {
         String commandId,
         AgentSessionRef agentSession,
         CommandExitListener onExit,
-        String agentType,
-        String agentSurface) {
+        AgentLaunchMetadata agent) {
       return record(
           new Launch(
               name,
@@ -157,8 +157,7 @@ class AgentLaunchServiceProjectHostTest {
               commandId,
               agentSession,
               null,
-              agentType,
-              agentSurface,
+              agent,
               CommandKind.TERMINAL));
     }
 
@@ -171,8 +170,7 @@ class AgentLaunchServiceProjectHostTest {
         AgentSessionRef agentSession,
         CommandExitListener onExit,
         ChatProtocolFactory protocolFactory,
-        String agentType,
-        String agentSurface) {
+        AgentLaunchMetadata agent) {
       return record(
           new Launch(
               name,
@@ -182,8 +180,7 @@ class AgentLaunchServiceProjectHostTest {
               commandId,
               agentSession,
               protocolFactory,
-              agentType,
-              agentSurface,
+              agent,
               CommandKind.CHAT));
     }
 
@@ -886,7 +883,7 @@ class AgentLaunchServiceProjectHostTest {
                       false,
                       AgentType.CLAUDE));
 
-      assertEquals("KIMI", commands.last().agentType(), "the session's harness wins");
+      assertEquals("KIMI", commands.last().agent().agentType(), "the session's harness wins");
       assertNotNull(command);
     }
 
@@ -911,7 +908,7 @@ class AgentLaunchServiceProjectHostTest {
 
       assertEquals("Claude Code (project MCP)", commands.last().name());
       assertEquals(CommandKind.CHAT, commands.last().kind());
-      assertEquals("CLAUDE", commands.last().agentType());
+      assertEquals("CLAUDE", commands.last().agent().agentType());
     }
 
     @Test
@@ -1212,6 +1209,126 @@ class AgentLaunchServiceProjectHostTest {
                                   .put("initialPrompt", prompt)))
                   .encode(),
               "test"));
+    }
+  }
+
+  // --- the launch record ------------------------------------------------------------------------
+
+  /**
+   * What a session was launched with, recorded on the command at launch. It is what makes
+   * "recreate only, and we do not surface staleness" a safe rule rather than an opaque one: the
+   * store can be edited at any time and a container keeps the document it was born with, so a
+   * session that behaved oddly last week is unreadable off anything else.
+   */
+  @Nested
+  class LaunchRecord {
+
+    @Test
+    void aChatRecordsTheWholeResolvedConfiguration() {
+      configurations =
+          AgentSurfaceConfigurations.of(
+              AgentConfigurationDocument.parse(
+                  "{\"version\":1,\"surfaces\":[{\"surface\":\"project.epics\",\"harness\":\"CLAUDE\","
+                      + "\"permissionMode\":\"PROMPT\",\"model\":\"opus\",\"effort\":\"xhigh\","
+                      + "\"remoteControl\":true,\"activityTracking\":false}]}",
+                  "test"));
+
+      Command command = service().launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS));
+      JsonObject record = new JsonObject(command.agentLaunchRecord());
+
+      assertEquals("project.epics", record.getString("surface"));
+      assertEquals("CLAUDE", record.getString("harness"));
+      assertEquals("opus", record.getString("model"));
+      assertEquals("xhigh", record.getString("effort"));
+      assertEquals("PROMPT", record.getString("permissionMode"));
+      assertTrue(record.getBoolean("remoteControl"));
+      assertEquals("qits project.epics main", record.getString("remoteControlName"));
+      assertFalse(record.getBoolean("activityTracking"));
+      assertTrue(record.getBoolean("configured"), "this container was born with a document");
+      assertEquals(
+          "repository", record.getJsonArray("mcpServers").getJsonObject(0).getString("server"));
+      assertFalse(record.getJsonArray("mcpServers").getJsonObject(0).getBoolean("readOnly"));
+      assertEquals(0, record.getJsonArray("externalMcpServers").size());
+    }
+
+    @Test
+    void aContainerWithNoDocumentSaysItWasNotConfigured() {
+      // The difference between "configured this way" and "nobody had configured it", which a reader
+      // of the record cannot otherwise tell — and which is exactly the rollout's own question.
+      Command command = service().launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS));
+
+      assertFalse(new JsonObject(command.agentLaunchRecord()).getBoolean("configured"));
+    }
+
+    @Test
+    void anUnattendedRunRecordsThatItsServersWereFenced() {
+      Command command = service().launchAutonomous("Composed run");
+      JsonObject record = new JsonObject(command.agentLaunchRecord());
+
+      assertEquals("epic.autonomous", record.getString("surface"));
+      assertTrue(
+          record.getJsonArray("mcpServers").getJsonObject(0).getBoolean("readOnly"),
+          "the fence is part of what it ran with");
+    }
+
+    @Test
+    void aKimiSessionRecordsTheKnobsItsHarnessCouldNotHonour() {
+      // The record says what the harness DID, not what the row held, and the notes say what the
+      // difference was — a surface reading as configured while its sessions ran as the default one
+      // is the failure this closes.
+      defaultType = AgentType.KIMI;
+      configurations =
+          AgentSurfaceConfigurations.of(
+              AgentConfigurationDocument.parse(
+                  "{\"version\":1,\"surfaces\":[{\"surface\":\"project.tickets\",\"harness\":\"KIMI\","
+                      + "\"permissionMode\":\"SKIP_PERMISSIONS\",\"effort\":\"high\","
+                      + "\"systemPrompt\":\"You are the desk.\"}]}",
+                  "test"));
+
+      Command command =
+          service().launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_TICKETS));
+      JsonObject record = new JsonObject(command.agentLaunchRecord());
+
+      assertEquals("", record.getString("effort"), "nothing was rendered, so nothing is recorded");
+      assertEquals(2, record.getJsonArray("notes").size(), record.getJsonArray("notes").encode());
+      assertTrue(record.getJsonArray("notes").encode().contains("no effort concept"));
+      assertTrue(record.getJsonArray("notes").encode().contains("system-prompt appendix"));
+    }
+
+    @Test
+    void anInteractiveLaunchRecordsTheSameWay() {
+      Command command =
+          service()
+              .launch(
+                  new AgentLaunchRequest(
+                      AgentMcpScope.PROJECT,
+                      AgentSurface.PROJECT_TICKETS,
+                      AgentLaunchMode.INTERACTIVE,
+                      null,
+                      null,
+                      false,
+                      false,
+                      null));
+
+      assertEquals(
+          "project.tickets", new JsonObject(command.agentLaunchRecord()).getString("surface"));
+    }
+
+    @Test
+    void theSignInTerminalRecordsNothing() {
+      // It renders nobody's configuration, so there is nothing to record — and a record here would
+      // be a configuration a reader could believe applied to it.
+      assertNull(service().launchLogin(AgentType.CLAUDE).agentLaunchRecord());
+    }
+
+    @Test
+    void noCredentialCanTravelInIt() {
+      // Attached external servers are recorded BY KEY. Not by url with a header stripped, not by a
+      // redacted value — by key, so there is no shape here a credential could ride in.
+      Command command = service().launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS));
+
+      assertFalse(command.agentLaunchRecord().contains("header"), command.agentLaunchRecord());
+      assertFalse(command.agentLaunchRecord().contains("Authorization"));
     }
   }
 

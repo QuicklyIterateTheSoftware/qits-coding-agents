@@ -2,6 +2,7 @@ package eu.wohlben.qits.agents;
 
 import eu.wohlben.qits.agents.acp.AcpChatProtocol;
 import eu.wohlben.qits.agents.acp.AcpSessionConfig;
+import eu.wohlben.qits.commands.AgentLaunchMetadata;
 import eu.wohlben.qits.commands.AgentSessionRef;
 import eu.wohlben.qits.commands.AgentSessionSource;
 import eu.wohlben.qits.commands.ChatProtocolFactory;
@@ -235,7 +236,8 @@ public final class AgentLaunchService {
 
     AgentSurface surface = request.surfaceOrDefault();
     PinnedSession pinned = pinSession(request.resumeSessionId(), request.fork(), type);
-    LaunchSpec spec = renderChat(request.scope(), surface, pinned, type);
+    Rendered rendered = renderedChat(request.scope(), surface, pinned, type);
+    LaunchSpec spec = rendered.spec();
     // Claude drives chat over stream-json; Kimi has no stdin chat, so its chat rides an in-JVM ACP
     // client with the scoped MCP servers carried on session/new.
     ChatProtocolFactory protocolFactory =
@@ -253,8 +255,7 @@ public final class AgentLaunchService {
             pinned.ref(),
             chatTranscriptSweep(),
             protocolFactory,
-            type.name(),
-            surface.key());
+            new AgentLaunchMetadata(type.name(), surface.key(), rendered.record().toJson()));
     // The live transcript import: the durable head a mid-run re-attach replays from.
     transcriptTail.startTail(command.id(), type);
     // Both turns go over stdin, in order: a stream-json chat only speaks over stdin, so neither can
@@ -284,9 +285,10 @@ public final class AgentLaunchService {
     // Its own surface rather than the epics desk's. This is a different session from a human's
     // epics chat — read-only marked servers, a bootstrap seed, nobody watching — and it has always
     // deserved its own key; borrowing the desk's was what there was before there were surfaces.
-    LaunchSpec spec =
-        renderAutonomousChat(
+    Rendered rendered =
+        renderedAutonomousChat(
             AgentMcpScope.REPOSITORY, AgentSurface.EPIC_AUTONOMOUS, pinned, type);
+    LaunchSpec spec = rendered.spec();
     ChatProtocolFactory protocolFactory =
         type == AgentType.KIMI
             ? process ->
@@ -307,8 +309,8 @@ public final class AgentLaunchService {
             pinned.ref(),
             chatTranscriptSweep(),
             protocolFactory,
-            type.name(),
-            AgentSurface.EPIC_AUTONOMOUS.key());
+            new AgentLaunchMetadata(
+                type.name(), AgentSurface.EPIC_AUTONOMOUS.key(), rendered.record().toJson()));
     transcriptTail.startTail(command.id(), type);
     // The bootstrap rides stdin as the first user turn (a chat only speaks over stdin); the agent
     // then pulls the real composed prompt back over MCP via taskPrompt. It is this surface's
@@ -341,9 +343,10 @@ public final class AgentLaunchService {
     // The first turn is the argv seed — the REPL opens on it — and anything after it is typed in
     // once the session is up. See openingTurns for why a second turn is the rare shape.
     List<String> turns = openingTurns(configurationFor(surface), request);
-    LaunchSpec spec =
-        renderInteractive(
+    Rendered rendered =
+        renderedInteractive(
             request.scope(), surface, turns.isEmpty() ? null : turns.get(0), pinned, type);
+    LaunchSpec spec = rendered.spec();
     Command command =
         commands.launchAgent(
             interactiveNameFor(request.scope(), surface, type),
@@ -353,8 +356,7 @@ public final class AgentLaunchService {
             pinned.commandId(),
             pinned.ref(),
             transcriptSweep(),
-            type.name(),
-            surface.key());
+            new AgentLaunchMetadata(type.name(), surface.key(), rendered.record().toJson()));
     for (String turn : turns.subList(Math.min(1, turns.size()), turns.size())) {
       commands.sendKeystrokes(command.id(), turn);
     }
@@ -455,9 +457,17 @@ public final class AgentLaunchService {
           case KIMI -> "Kimi sign-in";
         };
     // No surface: a sign-in terminal is not a session anyone started from anywhere in the product,
-    // and giving it one would key it to a configuration it must not render.
+    // and giving it one would key it to a configuration it must not render — and so no launch
+    // record either, for the same reason: there was no configuration to record.
     return commands.launchAgent(
-        name, spec.script(), true, spec.environment(), null, null, null, agentType.name(), null);
+        name,
+        spec.script(),
+        true,
+        spec.environment(),
+        null,
+        null,
+        null,
+        AgentLaunchMetadata.of(agentType.name(), null));
   }
 
   /** Renders the interactive login command with the shared-volume credential overlay. */
@@ -623,12 +633,19 @@ public final class AgentLaunchService {
    */
   LaunchSpec renderChat(
       AgentMcpScope scope, AgentSurface surface, PinnedSession pinned, AgentType agentType) {
-    AgentSurfaceConfiguration configuration = configurationFor(surface);
-    CodingAgent agent = CodingAgentFactory.ofType(agentType);
-    for (ScopedMcp server : attachedServers(scope, configuration, false)) {
-      agent.mcpServer(server.key(), McpServers.httpMcp(server.url()));
-    }
-    return configured(agent, agentType, pinned, configuration, false).chat();
+    return renderedChat(scope, surface, pinned, agentType).spec();
+  }
+
+  /**
+   * A rendered launch and the record of what it was rendered from — the pair every launch path needs,
+   * because the command carries both.
+   */
+  record Rendered(LaunchSpec spec, AgentLaunchRecord record) {}
+
+  /** {@link #renderChat} with the launch record beside it. */
+  Rendered renderedChat(
+      AgentMcpScope scope, AgentSurface surface, PinnedSession pinned, AgentType agentType) {
+    return render(scope, surface, pinned, agentType, false, false, null);
   }
 
   /**
@@ -695,18 +712,13 @@ public final class AgentLaunchService {
    */
   LaunchSpec renderAutonomousChat(
       AgentMcpScope scope, AgentSurface surface, PinnedSession pinned, AgentType agentType) {
-    AgentSurfaceConfiguration configuration = configurationFor(surface);
-    CodingAgent agent = CodingAgentFactory.ofType(agentType);
-    // Unattended first turn under skip-permissions: every server is read-only marked so the host's
-    // ReadOnlyRepositoryToolFilter hides the mutating repository tools
-    // (createWorkspace/integrateBranch/…). The run still gets taskPrompt + the read-only tools; its
-    // own git work happens inside this container, not via host-side MCP mutations. The fence is the
-    // union of the run's shape and the configuration's own readOnly flag — the two composed
-    // surfaces are seeded with it set, so the two agree rather than one overriding the other.
-    for (ScopedMcp server : attachedServers(scope, configuration, true)) {
-      agent.mcpServer(server.key(), McpServers.httpMcp(server.url()));
-    }
-    return configured(agent, agentType, pinned, configuration, false).chat();
+    return renderedAutonomousChat(scope, surface, pinned, agentType).spec();
+  }
+
+  /** {@link #renderAutonomousChat} with the launch record beside it. */
+  Rendered renderedAutonomousChat(
+      AgentMcpScope scope, AgentSurface surface, PinnedSession pinned, AgentType agentType) {
+    return render(scope, surface, pinned, agentType, false, true, null);
   }
 
   /**
@@ -728,15 +740,97 @@ public final class AgentLaunchService {
       String initialContext,
       PinnedSession pinned,
       AgentType agentType) {
+    return renderedInteractive(scope, surface, initialContext, pinned, agentType).spec();
+  }
+
+  /** {@link #renderInteractive} with the launch record beside it. */
+  Rendered renderedInteractive(
+      AgentMcpScope scope,
+      AgentSurface surface,
+      String initialContext,
+      PinnedSession pinned,
+      AgentType agentType) {
+    return render(scope, surface, pinned, agentType, true, false, initialContext);
+  }
+
+  /**
+   * The one render, and the one place a launch record is built from what it rendered.
+   *
+   * <p>The three shapes were three copies of the same six lines with one difference each: a chat
+   * calls {@code chat()}, an interactive launch calls {@code start()} and carries an argv seed, and
+   * an autonomous run marks every server url read-only. Recording what a launch ran with is the
+   * change that made keeping them apart untenable — a record built in three places is three records
+   * that can disagree about the same session.
+   *
+   * <p>{@code unattended} is the autonomous run's fence: nobody is watching a composed run's first
+   * turn under skip-permissions, so every server url is read-only marked and the host's tool filter
+   * hides the mutating repository tools. The fence is the union of the run's shape and the
+   * configuration's own {@code readOnly} flag — the two composed surfaces are seeded with it set, so
+   * the two agree rather than one overriding the other.
+   */
+  private Rendered render(
+      AgentMcpScope scope,
+      AgentSurface surface,
+      PinnedSession pinned,
+      AgentType agentType,
+      boolean interactive,
+      boolean unattended,
+      String initialContext) {
     AgentSurfaceConfiguration configuration = configurationFor(surface);
     CodingAgent agent = CodingAgentFactory.ofType(agentType);
-    for (ScopedMcp server : attachedServers(scope, configuration, false)) {
+    List<ScopedMcp> attached = attachedServers(scope, configuration, unattended);
+    for (ScopedMcp server : attached) {
       agent.mcpServer(server.key(), McpServers.httpMcp(server.url()));
     }
-    if (initialContext != null && !initialContext.isBlank()) {
+    if (interactive && initialContext != null && !initialContext.isBlank()) {
       agent.initialContext(initialContext);
     }
-    return configured(agent, agentType, pinned, configuration, true).start();
+    CodingAgent rendered = configured(agent, agentType, pinned, configuration, interactive);
+    LaunchSpec spec = interactive ? rendered.start() : rendered.chat();
+    return new Rendered(spec, launchRecord(configuration, agentType, rendered, attached, interactive));
+  }
+
+  /**
+   * What this launch ran with, as a record on the command. Built from the agent that was just
+   * rendered rather than from the configuration alone, so it says what the harness <em>did</em> —
+   * including the knobs it could not honour, which is the difference between a record and a copy of
+   * the row.
+   */
+  private AgentLaunchRecord launchRecord(
+      AgentSurfaceConfiguration configuration,
+      AgentType agentType,
+      CodingAgent rendered,
+      List<ScopedMcp> attached,
+      boolean interactive) {
+    List<AgentLaunchRecord.AttachedServer> servers = new ArrayList<>();
+    for (ScopedMcp server : attached) {
+      servers.add(
+          new AgentLaunchRecord.AttachedServer(
+              server.key(), server.url().contains("agentReadOnly=true")));
+    }
+    // Claude only: Kimi has no remote-control mechanism, so a Kimi session asked for no bridge and
+    // records no name — the knob it was configured with is still recorded, and the note says why
+    // nothing came of it.
+    String remoteControlName =
+        configuration.remoteControl() && agentType == AgentType.CLAUDE
+            ? AgentRemoteControl.sessionName(
+                configuration.surface(), checkout == null ? null : checkout.branch())
+            : "";
+    return new AgentLaunchRecord(
+        configuration.surface(),
+        agentType,
+        configuration.model(),
+        // What the harness took, not what the row held: a Kimi launch records no effort because it
+        // rendered none, and the note beside it says the configuration asked for one.
+        agentType == AgentType.CLAUDE ? configuration.effort() : "",
+        configuration.permissionMode(),
+        configuration.remoteControl(),
+        remoteControlName,
+        configuration.activityTracking(),
+        servers,
+        List.of(),
+        !configuration.shipped(),
+        rendered.renderNotes());
   }
 
   /**
