@@ -76,6 +76,13 @@ public final class CommandsAgentCommands implements AgentCommands {
   }
 
   @Override
+  public boolean sendKeystrokes(String commandId, String text) {
+    // A carriage return rather than a newline: that is what a terminal sends for Enter, and what the
+    // attached xterm.js writes on the same channel.
+    return registry.input(commandId, (text + "\r").getBytes(java.nio.charset.StandardCharsets.UTF_8));
+  }
+
+  @Override
   public void reportAgentSession(String commandId, String sessionId, String transcriptPath) {
     commands.reportAgentSession(commandId, sessionId, transcriptPath);
   }

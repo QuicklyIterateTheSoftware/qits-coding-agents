@@ -74,4 +74,22 @@ public interface AgentDefaults {
   default AgentSurfaceConfigurations surfaceConfigurations() {
     return AgentSurfaceConfigurations.shipped();
   }
+
+  /**
+   * What this container knows about itself, for a surface's initial-prompt template: {@code
+   * project}, {@code epic}, {@code repository}, {@code workspace}, {@code ticket} — the names in
+   * {@link AgentPromptTemplate#NAMES} that are not the checkout's own.
+   *
+   * <p>The host's, for the same reason the MCP urls are: a project id, an epic slug, a workspace id
+   * and a ticket key are things a daemon knows about itself, and a library that held them would be a
+   * library that knows which product it is inside. A default method answering nothing, again because
+   * this is a released artifact — a host that has not adopted it leaves those placeholders literal,
+   * which is exactly what an unresolvable fact does anyway.
+   *
+   * <p>Values are substituted into a prompt, not into a url or an argv, so they need no grammar; a
+   * blank one is treated as absent.
+   */
+  default java.util.Map<String, String> ambientFacts() {
+    return java.util.Map.of();
+  }
 }

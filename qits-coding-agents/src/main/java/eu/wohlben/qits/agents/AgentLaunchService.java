@@ -257,11 +257,10 @@ public final class AgentLaunchService {
             surface.key());
     // The live transcript import: the durable head a mid-run re-attach replays from.
     transcriptTail.startTail(command.id(), type);
-    String seed = request.deliverTaskPrompt() ? taskPromptBootstrap : request.initialContext();
-    if (seed != null && !seed.isBlank()) {
-      // Seed the conversation as the first user turn. A stream-json chat only speaks over stdin,
-      // so the seed can't be a CLI argument; the pipe buffers it until the harness starts reading.
-      commands.chatSend(command.id(), seed);
+    // Both turns go over stdin, in order: a stream-json chat only speaks over stdin, so neither can
+    // be a CLI argument, and the pipe buffers them until the harness starts reading.
+    for (String turn : openingTurns(configurationFor(surface), request)) {
+      commands.chatSend(command.id(), turn);
     }
     return command;
   }
@@ -312,8 +311,11 @@ public final class AgentLaunchService {
             AgentSurface.EPIC_AUTONOMOUS.key());
     transcriptTail.startTail(command.id(), type);
     // The bootstrap rides stdin as the first user turn (a chat only speaks over stdin); the agent
-    // then pulls the real composed prompt back over MCP via taskPrompt.
-    commands.chatSend(command.id(), taskPromptBootstrap);
+    // then pulls the real composed prompt back over MCP via taskPrompt. It is this surface's
+    // configured initial prompt when the document carries one, and the host's own sentence when it
+    // does not — see initialPrompt.
+    commands.chatSend(
+        command.id(), taskPromptTurn(configurationFor(AgentSurface.EPIC_AUTONOMOUS)));
     return command;
   }
 
@@ -334,20 +336,108 @@ public final class AgentLaunchService {
       return launchLogin(type);
     }
 
-    String seed = request.deliverTaskPrompt() ? taskPromptBootstrap : request.initialContext();
     AgentSurface surface = request.surfaceOrDefault();
     PinnedSession pinned = pinSession(request.resumeSessionId(), request.fork(), type);
-    LaunchSpec spec = renderInteractive(request.scope(), surface, seed, pinned, type);
-    return commands.launchAgent(
-        interactiveNameFor(request.scope(), surface, type),
-        spec.script(),
-        true,
-        spec.environment(),
-        pinned.commandId(),
-        pinned.ref(),
-        transcriptSweep(),
-        type.name(),
-        surface.key());
+    // The first turn is the argv seed — the REPL opens on it — and anything after it is typed in
+    // once the session is up. See openingTurns for why a second turn is the rare shape.
+    List<String> turns = openingTurns(configurationFor(surface), request);
+    LaunchSpec spec =
+        renderInteractive(
+            request.scope(), surface, turns.isEmpty() ? null : turns.get(0), pinned, type);
+    Command command =
+        commands.launchAgent(
+            interactiveNameFor(request.scope(), surface, type),
+            spec.script(),
+            true,
+            spec.environment(),
+            pinned.commandId(),
+            pinned.ref(),
+            transcriptSweep(),
+            type.name(),
+            surface.key());
+    for (String turn : turns.subList(Math.min(1, turns.size()), turns.size())) {
+      commands.sendKeystrokes(command.id(), turn);
+    }
+    return command;
+  }
+
+  /**
+   * The turns a session opens with, in order: <b>the surface's configured initial prompt first</b>,
+   * then whatever the caller composed.
+   *
+   * <p>The two are different things and this is where that stops being blurred. The initial prompt
+   * belongs to the surface — it is the same sentence every session started from that place opens
+   * with, written once in the editor — and the caller's is this one session's. So the configured one
+   * goes first, and the caller's follows it as a second turn rather than replacing it.
+   *
+   * <p><b>They almost never both arrive.</b> The owner settled that a user prompt landing alongside
+   * an initial prompt is the failure shape rather than the normal one — a human's prompt arrives
+   * later, after reading what came back — so this deliberately does not design for simultaneity: a
+   * chat writes both to stdin in order, and an interactive launch seeds the first on argv and types
+   * the second into the PTY. Typing into a TUI that is still starting is exactly the race that makes
+   * a second opening turn a shape to avoid, and it is avoided by not sending one, not by buffering.
+   *
+   * <p>{@code deliverTaskPrompt} keeps deciding <em>whether</em> the task-prompt fetch is what this
+   * run does. When it is, the fetch instruction is the only opening turn: the caller's composed text
+   * is the draft the agent is about to pull over MCP, and pushing it as well would deliver it twice
+   * in two shapes.
+   */
+  private List<String> openingTurns(
+      AgentSurfaceConfiguration configuration, AgentLaunchRequest request) {
+    if (request.deliverTaskPrompt()) {
+      return List.of(taskPromptTurn(configuration));
+    }
+    List<String> turns = new ArrayList<>();
+    String initial = initialPrompt(configuration);
+    if (!initial.isBlank()) {
+      turns.add(initial);
+    }
+    String composed = request.initialContext();
+    if (composed != null && !composed.isBlank()) {
+      turns.add(composed);
+    }
+    return List.copyOf(turns);
+  }
+
+  /**
+   * The turn a composed run opens with: <b>the surface's configured initial prompt, and the host's
+   * own bootstrap sentence when it has none.</b>
+   *
+   * <p>This is where {@link #TASK_PROMPT_BOOTSTRAP} and the initial prompt meet, and the resolution
+   * is that they are the same field one release apart. The sentence {@code epic.autonomous} and
+   * {@code ticket.dispatch} push today <em>is</em> an initial prompt: one line, per surface, carrying
+   * the user's authority while {@code taskPrompt} carries the content. So the store seeds it as
+   * those two surfaces' initial prompt — each with its own daemon's noun, "this project" and "this
+   * workspace", because harmonising two live literals would change what one of them pushes on the
+   * day the store ships — and a configured value simply wins here.
+   *
+   * <p>The host's constructor argument does not go away; it becomes the fallback for a container
+   * born without a document, which is the same rung every other shipped constant falls back to.
+   */
+  private String taskPromptTurn(AgentSurfaceConfiguration configuration) {
+    String initial = initialPrompt(configuration);
+    return initial.isBlank() ? taskPromptBootstrap : initial;
+  }
+
+  /**
+   * The surface's initial prompt with its placeholders filled in — {@code {{epic}}}, {@code
+   * {{repository}}}, {@code {{branch}}} and the rest of {@link AgentPromptTemplate#NAMES}.
+   *
+   * <p>The checkout answers what it knows and the host answers the rest through {@link
+   * AgentDefaults#ambientFacts()}; a name nobody can answer is left literal rather than rendered as
+   * {@code null}, so a prompt with a hole in it reads as one.
+   */
+  private String initialPrompt(AgentSurfaceConfiguration configuration) {
+    String template = configuration.initialPrompt();
+    if (template == null || template.isBlank()) {
+      return "";
+    }
+    Map<String, String> facts = new HashMap<>(defaults.ambientFacts());
+    if (checkout != null) {
+      facts.put("branch", checkout.branch());
+      facts.put("commit", checkout.commitHash());
+    }
+    return AgentPromptTemplate.render(template, facts);
   }
 
   /**

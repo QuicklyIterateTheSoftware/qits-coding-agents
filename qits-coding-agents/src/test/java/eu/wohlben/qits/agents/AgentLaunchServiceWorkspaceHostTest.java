@@ -82,6 +82,7 @@ class AgentLaunchServiceWorkspaceHostTest {
     private final List<Launch> launches = new ArrayList<>();
     private final Map<String, String> ownedSessions = new HashMap<>();
     private final List<String> chatSends = new ArrayList<>();
+    private final List<String> keystrokes = new ArrayList<>();
 
     private record Launch(
         String name,
@@ -168,6 +169,12 @@ class AgentLaunchServiceWorkspaceHostTest {
     @Override
     public boolean chatSend(String commandId, String text) {
       chatSends.add(text);
+      return true;
+    }
+
+    @Override
+    public boolean sendKeystrokes(String commandId, String text) {
+      keystrokes.add(text);
       return true;
     }
 

@@ -54,6 +54,19 @@ public interface AgentCommands {
   /** Delivers a user turn to a running chat. */
   boolean chatSend(String commandId, String text);
 
+  /**
+   * Types a turn into a running interactive session's PTY, followed by a carriage return, the way a
+   * human at the terminal would.
+   *
+   * <p>An interactive launch has no stdin channel of its own: the REPL owns the terminal, so a turn
+   * after the argv seed is keystrokes and nothing else. It is used for exactly one thing — the
+   * caller's composed prompt when a surface also has a configured initial prompt, which the owner
+   * settled is the failure shape rather than the normal one — and it inherits that shape's race: a
+   * TUI that is still starting may not have a prompt to type into yet. That is a reason not to send
+   * a second opening turn, not a reason to buffer one; see {@code AgentLaunchService.openingTurns}.
+   */
+  boolean sendKeystrokes(String commandId, String text);
+
   /** Records a hook-reported session identity on a command. */
   void reportAgentSession(String commandId, String sessionId, String transcriptPath);
 

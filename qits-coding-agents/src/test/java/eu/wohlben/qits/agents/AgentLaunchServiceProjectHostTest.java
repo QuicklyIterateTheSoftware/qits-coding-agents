@@ -83,6 +83,9 @@ class AgentLaunchServiceProjectHostTest {
    */
   private AgentSurfaceConfigurations configurations;
 
+  /** What this container knows about itself, for an initial prompt's placeholders. */
+  private Map<String, String> ambientFacts;
+
   @BeforeEach
   void setUp() {
     commands = new Commands();
@@ -90,6 +93,7 @@ class AgentLaunchServiceProjectHostTest {
     defaultType = AgentType.CLAUDE;
     activityTracking = true;
     configurations = AgentSurfaceConfigurations.shipped();
+    ambientFacts = Map.of("project", "qits", "repository", REPO);
   }
 
   // --- fakes ------------------------------------------------------------------------------------
@@ -99,6 +103,7 @@ class AgentLaunchServiceProjectHostTest {
     private final List<Launch> launches = new ArrayList<>();
     private final Map<String, String> ownedSessions = new HashMap<>();
     private final List<String> chatSends = new ArrayList<>();
+    private final List<String> keystrokes = new ArrayList<>();
 
     private record Launch(
         String name,
@@ -189,6 +194,12 @@ class AgentLaunchServiceProjectHostTest {
     }
 
     @Override
+    public boolean sendKeystrokes(String commandId, String text) {
+      keystrokes.add(text);
+      return true;
+    }
+
+    @Override
     public void reportAgentSession(String commandId, String sessionId, String transcriptPath) {}
 
     @Override
@@ -271,6 +282,11 @@ class AgentLaunchServiceProjectHostTest {
           @Override
           public AgentSurfaceConfigurations surfaceConfigurations() {
             return configurations;
+          }
+
+          @Override
+          public Map<String, String> ambientFacts() {
+            return ambientFacts;
           }
         };
     CommandStore store = new CommandStore();
@@ -1031,6 +1047,171 @@ class AgentLaunchServiceProjectHostTest {
                           true,
                           false,
                           null)));
+    }
+  }
+
+  // --- the initial prompt -----------------------------------------------------------------------
+
+  /**
+   * The configured initial prompt as the session's own first turn — the surface's sentence, written
+   * once in the editor, before anything this one caller composed.
+   */
+  @Nested
+  class InitialPrompt {
+
+    @Test
+    void itIsTheFirstTurnAndTheCallersIsTheSecond() {
+      configurations = withInitialPrompt("Survey the open tickets before answering.");
+
+      service()
+          .launchChat(
+              new AgentLaunchRequest(
+                  AgentMcpScope.PROJECT,
+                  AgentSurface.PROJECT_EPICS,
+                  AgentLaunchMode.CHAT,
+                  "what is left on the plan?",
+                  null,
+                  false,
+                  false,
+                  null));
+
+      assertEquals(
+          List.of("Survey the open tickets before answering.", "what is left on the plan?"),
+          commands.chatSends,
+          "the surface's turn opens the session; the caller's follows it");
+    }
+
+    @Test
+    void itIsTemplatedOverWhatTheContainerKnowsAboutItself() {
+      configurations = withInitialPrompt("You are in {{repository}} on {{branch}} for {{project}}.");
+
+      service().launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS));
+
+      assertEquals(
+          List.of("You are in " + REPO + " on main for qits."),
+          commands.chatSends,
+          "the checkout answers branch; the host answers the rest");
+    }
+
+    @Test
+    void aFactNobodyCanAnswerStaysAsItWasWritten() {
+      configurations = withInitialPrompt("Fix {{ticket}}.");
+
+      service().launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS));
+
+      assertEquals(List.of("Fix {{ticket}}."), commands.chatSends, "literal, not null and not gone");
+    }
+
+    @Test
+    void anInteractiveLaunchSeedsTheFirstOnArgvAndTypesTheSecond() {
+      // A REPL has no stdin channel of its own, so the opening turn is the argv seed and anything
+      // after it is keystrokes. The second turn is the failure shape rather than the normal one,
+      // and it is delivered rather than dropped.
+      configurations = withInitialPrompt("Read the plan first.");
+
+      service()
+          .launch(
+              new AgentLaunchRequest(
+                  AgentMcpScope.PROJECT,
+                  AgentSurface.PROJECT_EPICS,
+                  AgentLaunchMode.INTERACTIVE,
+                  "and then draft the epic",
+                  null,
+                  false,
+                  false,
+                  null));
+
+      assertTrue(
+          commands.last().script().startsWith("exec claude 'Read the plan first.'"),
+          commands.last().script());
+      assertEquals(List.of("and then draft the epic"), commands.keystrokes);
+      assertTrue(commands.chatSends.isEmpty(), "a terminal has no chat channel");
+    }
+
+    @Test
+    void aSurfaceWithNoInitialPromptOpensExactlyAsItDid() {
+      service()
+          .launch(
+              new AgentLaunchRequest(
+                  AgentMcpScope.PROJECT,
+                  AgentSurface.PROJECT_EPICS,
+                  AgentLaunchMode.INTERACTIVE,
+                  "do the thing",
+                  null,
+                  false,
+                  false,
+                  null));
+
+      assertTrue(commands.last().script().startsWith("exec claude 'do the thing'"));
+      assertTrue(commands.keystrokes.isEmpty(), "one turn is one turn, on argv, as before");
+    }
+
+    @Test
+    void theTaskPromptBootstrapIsThoseSurfacesInitialPromptValue() {
+      // The resolution this task settles: the sentence the two composed runs push IS an initial
+      // prompt. The store seeds it per surface — each daemon's own noun — and a configured value
+      // simply wins over the host's constructor argument.
+      configurations =
+          withInitialPrompt(
+              AgentSurface.EPIC_AUTONOMOUS,
+              "Fetch the current task prompt for {{project}} with the taskPrompt tool.");
+
+      service().launchAutonomous("Composed run");
+
+      assertEquals(
+          List.of("Fetch the current task prompt for qits with the taskPrompt tool."),
+          commands.chatSends);
+    }
+
+    @Test
+    void theHostsSentenceIsTheFallbackForAContainerBornWithoutADocument() {
+      // Not gone: it is the same rung every other shipped constant falls back to.
+      service().launchAutonomous("Composed run");
+      assertEquals(List.of(PROJECT_TASK_PROMPT_BOOTSTRAP), commands.chatSends);
+    }
+
+    @Test
+    void deliverTaskPromptStillDecidesWhetherTheFetchIsWhatThisRunDoes() {
+      // The flag keeps its own job. When it is set, the fetch instruction is the ONLY opening turn:
+      // the caller's composed text is the draft the agent is about to pull over MCP, and pushing it
+      // as well would deliver it twice in two shapes.
+      configurations = withInitialPrompt("Read the plan first.");
+
+      service()
+          .launchChat(
+              new AgentLaunchRequest(
+                  AgentMcpScope.PROJECT,
+                  AgentSurface.PROJECT_EPICS,
+                  AgentLaunchMode.CHAT,
+                  "ignored",
+                  null,
+                  false,
+                  true,
+                  null));
+
+      assertEquals(List.of("Read the plan first."), commands.chatSends);
+    }
+
+    private AgentSurfaceConfigurations withInitialPrompt(String prompt) {
+      return withInitialPrompt(AgentSurface.PROJECT_EPICS, prompt);
+    }
+
+    private AgentSurfaceConfigurations withInitialPrompt(AgentSurface surface, String prompt) {
+      return AgentSurfaceConfigurations.of(
+          AgentConfigurationDocument.parse(
+              new JsonObject()
+                  .put("version", 1)
+                  .put(
+                      "surfaces",
+                      new io.vertx.core.json.JsonArray()
+                          .add(
+                              new JsonObject()
+                                  .put("surface", surface.key())
+                                  .put("harness", "CLAUDE")
+                                  .put("permissionMode", "SKIP_PERMISSIONS")
+                                  .put("initialPrompt", prompt)))
+                  .encode(),
+              "test"));
     }
   }
 
