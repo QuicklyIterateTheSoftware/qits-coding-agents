@@ -41,6 +41,11 @@ import java.util.List;
  * @param systemPrompt the appendix to the harness's own system prompt; empty for a surface that
  *     steers with nothing
  * @param initialPrompt the turn pushed at session start; delivered by task d517c81a
+ * @param externalMcpServers the catalog entries this surface attaches, <b>fully rendered</b> — url
+ *     and header value already resolved by the service that built the document. The one shape in
+ *     this library that carries a credential; see {@link AgentExternalMcpServer}. Empty for every
+ *     shipped default, and there never can be one: the catalog is operator-defined and starts empty,
+ *     so a shipped configuration naming an entry would name a row nobody has created
  * @param mcpServers the built-in servers this surface attaches, in render order. {@code null} means
  *     <em>whatever the host attaches for the launch's scope</em> — the shipped fallback, and the
  *     only honest answer for a container with no document, since the constants this library ships
@@ -59,6 +64,7 @@ public record AgentSurfaceConfiguration(
     String systemPrompt,
     String initialPrompt,
     List<AgentMcpAttachment> mcpServers,
+    List<AgentExternalMcpServer> externalMcpServers,
     boolean shipped) {
 
   public AgentSurfaceConfiguration {
@@ -67,6 +73,16 @@ public record AgentSurfaceConfiguration(
     systemPrompt = systemPrompt == null ? "" : systemPrompt;
     initialPrompt = initialPrompt == null ? "" : initialPrompt;
     mcpServers = mcpServers == null ? null : List.copyOf(mcpServers);
+    externalMcpServers =
+        externalMcpServers == null ? List.of() : List.copyOf(externalMcpServers);
+  }
+
+  /**
+   * The catalog entries this surface attaches, by key — what a launch record says, because a record
+   * must have no shape a credential could travel in.
+   */
+  public List<String> externalMcpServerKeys() {
+    return externalMcpServers.stream().map(AgentExternalMcpServer::key).toList();
   }
 
   /** The system-prompt appendix, or null when this surface steers with nothing. */

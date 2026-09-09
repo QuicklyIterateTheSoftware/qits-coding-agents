@@ -194,7 +194,8 @@ public final class CommandService {
                 agent));
     registry.spawn(
         prepared.command().id(),
-        prepared.command().executeScript(),
+        // The rendered script, not the recorded one: a redacted script is for reading.
+        script,
         prepared.env(),
         compose(extraExitListener),
         commandLogService);
@@ -274,7 +275,8 @@ public final class CommandService {
                 agent));
     registry.spawnChat(
         prepared.command().id(),
-        prepared.command().executeScript(),
+        // The rendered script, not the recorded one: a redacted script is for reading.
+        script,
         prepared.env(),
         protocolFactory,
         compose(extraExitListener),
@@ -294,7 +296,14 @@ public final class CommandService {
     };
   }
 
-  /** Record a RUNNING command and resolve its environment — but don't spawn. */
+  /**
+   * Record a RUNNING command and resolve its environment — but don't spawn.
+   *
+   * <p>The command is recorded with the <b>redacted</b> script and the process is spawned with the
+   * one the caller rendered; see {@link AgentLaunchMetadata#redact}. They are the same string for
+   * every launch that carries no credential, which is every launch but one that attaches an external
+   * MCP server.
+   */
   private Prepared prepare(LaunchDescriptor descriptor) {
     // Before the record, not after: a container whose self-provision failed has no checkout to
     // launch into, and refusing here keeps it from collecting commands stuck in RUNNING that never
@@ -308,7 +317,7 @@ public final class CommandService {
             checkout.commitHash(),
             descriptor.actionId(),
             descriptor.name(),
-            descriptor.script(),
+            agentMetadata(descriptor).redact(descriptor.script()),
             descriptor.interactive(),
             descriptor.kind(),
             descriptor.commandId(),
@@ -319,6 +328,10 @@ public final class CommandService {
     env.put("TERM", "xterm-256color");
     env.putAll(descriptor.environment());
     return new Prepared(command, env);
+  }
+
+  private static AgentLaunchMetadata agentMetadata(LaunchDescriptor descriptor) {
+    return descriptor.agent() == null ? AgentLaunchMetadata.NONE : descriptor.agent();
   }
 
   /** The single bridge from a process ending to its recorded status. */

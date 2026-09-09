@@ -1,11 +1,13 @@
 package eu.wohlben.qits.commands;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
@@ -82,6 +84,63 @@ class CommandServiceTest {
     assertEquals("0123456789abcdef", command.commitHash());
     assertEquals(CommandKind.TERMINAL, command.kind());
     waitForFinish(h, command.id());
+  }
+
+  @Test
+  void anAgentLaunchStoresARedactedScriptAndRunsTheRealOne(@TempDir Path workspace)
+      throws Exception {
+    // The rendered command line is kept on the command, answered by the API and shown on a command
+    // page — which was right for every launch this platform had until an external MCP server's
+    // credential started riding in one. So the two diverge in exactly one place: what is stored.
+    Harness h = harness(workspace, new DeclaredActions(List.of()));
+    Path proof = workspace.resolve("what-ran");
+
+    Command command =
+        h.service()
+            .launchAgent(
+                "Claude Code (project MCP)",
+                "printf '%s' 'Bearer sk-live-secret' > " + proof,
+                false,
+                Map.of(),
+                null,
+                null,
+                null,
+                new AgentLaunchMetadata(
+                    "CLAUDE", "project.epics", "{}", List.of("Bearer sk-live-secret")));
+    waitForFinish(h, command.id());
+
+    assertFalse(
+        h.store().find(command.id()).orElseThrow().executeScript().contains("sk-live-secret"),
+        "what a command stores carries no credential");
+    assertTrue(
+        h.store().find(command.id()).orElseThrow().executeScript().contains("<redacted>"),
+        "and a reader can see that something was withheld");
+    assertEquals(
+        "Bearer sk-live-secret",
+        Files.readString(proof),
+        "while the process ran with the script as it was rendered");
+    assertEquals("project.epics", command.agentSurface());
+    assertEquals("{}", command.agentLaunchRecord());
+  }
+
+  @Test
+  void aLaunchWithNothingToRedactStoresExactlyWhatItRan(@TempDir Path workspace) throws Exception {
+    Harness h = harness(workspace, new DeclaredActions(List.of()));
+
+    Command command =
+        h.service()
+            .launchAgent(
+                "Claude Code (project MCP)",
+                "echo hello",
+                false,
+                Map.of(),
+                null,
+                null,
+                null,
+                AgentLaunchMetadata.of("CLAUDE", "project.epics"));
+    waitForFinish(h, command.id());
+
+    assertEquals("echo hello", command.executeScript());
   }
 
   @Test

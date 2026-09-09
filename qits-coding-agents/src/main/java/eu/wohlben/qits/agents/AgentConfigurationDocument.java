@@ -47,8 +47,29 @@ import java.util.Optional;
 public record AgentConfigurationDocument(
     int version, String generatedAt, Map<String, AgentSurfaceConfiguration> surfaces) {
 
-  /** The newest shape this library understands. Must track the service's {@code CURRENT_VERSION}. */
-  public static final int CURRENT_VERSION = 1;
+  /**
+   * The newest shape this library understands. Must track the service's {@code CURRENT_VERSION}.
+   *
+   * <p><b>2 since the external MCP catalog.</b> A surface entry is now {@code {configuration,
+   * externalMcpServers}} rather than the configuration record flat, because the rendered external
+   * servers carry credentials and had nowhere honest to sit inside a record the editor also reads.
+   * Version 1 is still read — it costs one branch, and a container created between the two releases
+   * is a real thing for as long as it lives.
+   */
+  public static final int CURRENT_VERSION = 2;
+
+  /**
+   * The keys the platform's own MCP servers are registered under. Reserved: an external entry taking
+   * one of these would not attach twice, it would silently displace the platform's server in the one
+   * key-to-config object both harnesses render — and the session would look entirely normal while
+   * talking to somebody else's repository server.
+   *
+   * <p>The store validates this on write ({@code AgentMcpCatalog.requireCatalogKey}); it is checked
+   * again here, at boot, and once more at render, because a document can reach a container from an
+   * older service and this is the one collision whose failure is invisible.
+   */
+  public static final List<String> RESERVED_SERVER_KEYS =
+      List.of("repository", "actions", "observability");
 
   public AgentConfigurationDocument {
     surfaces = surfaces == null ? Map.of() : Map.copyOf(surfaces);
@@ -125,7 +146,12 @@ public record AgentConfigurationDocument(
       if (!entry.isObject()) {
         throw invalid(origin, at, "must be an object");
       }
-      AgentSurfaceConfiguration surface = parseSurface(entry, origin, at);
+      // A version-2 entry wraps the configuration beside the rendered external servers; a
+      // version-1 entry IS the configuration. Which shape it is, is readable off the entry, so the
+      // branch does not have to trust the version field to be honest about its own body.
+      Json configuration = entry.path("configuration").isObject() ? entry.path("configuration") : entry;
+      AgentSurfaceConfiguration surface =
+          parseSurface(configuration, parseExternalServers(entry, origin, at), origin, at);
       if (surfaces.put(surface.surface(), surface) != null) {
         throw invalid(origin, at + ".surface", "is configured twice: " + surface.surface());
       }
@@ -134,7 +160,11 @@ public record AgentConfigurationDocument(
         version, root.path("generatedAt").asText(""), surfaces);
   }
 
-  private static AgentSurfaceConfiguration parseSurface(Json entry, String origin, String at) {
+  private static AgentSurfaceConfiguration parseSurface(
+      Json entry,
+      List<AgentExternalMcpServer> externalServers,
+      String origin,
+      String at) {
     String key = entry.path("surface").asText("").trim();
     if (key.isEmpty()) {
       throw invalid(origin, at + ".surface", "must name a surface");
@@ -171,7 +201,75 @@ public record AgentConfigurationDocument(
         entry.path("systemPrompt").asText(""),
         entry.path("initialPrompt").asText(""),
         parseAttachments(entry, origin, at),
+        externalServers,
         false);
+  }
+
+  /**
+   * The rendered external MCP servers on a version-2 surface entry — the one place in this document
+   * a credential appears, and the reason the document is a mounted file rather than an environment
+   * variable.
+   *
+   * <p>Validated here rather than trusted: the key must exist, must not be one of {@link
+   * #RESERVED_SERVER_KEYS}, and must not repeat; the url must be there; and a header name and a
+   * header value are set together or not at all — a header with no value is a server that will 401
+   * on the agent's first tool call with nothing in the configuration to say why, which surfaces as
+   * a confused agent hours later rather than as an error anybody reads.
+   */
+  private static List<AgentExternalMcpServer> parseExternalServers(
+      Json entry, String origin, String at) {
+    Json servers = entry.path("externalMcpServers");
+    if (servers.isMissing() || servers.isNull()) {
+      return List.of();
+    }
+    if (!servers.isArray()) {
+      throw invalid(origin, at + ".externalMcpServers", "must be an array");
+    }
+    List<AgentExternalMcpServer> external = new ArrayList<>();
+    List<String> keys = new ArrayList<>();
+    int index = 0;
+    for (Json server : servers) {
+      String where = at + ".externalMcpServers[" + index++ + "]";
+      if (!server.isObject()) {
+        throw invalid(origin, where, "must be an object");
+      }
+      String key = server.path("key").asText("").trim();
+      if (key.isEmpty()) {
+        throw invalid(origin, where + ".key", "must name a server");
+      }
+      if (RESERVED_SERVER_KEYS.contains(key.toLowerCase(java.util.Locale.ROOT))) {
+        throw invalid(
+            origin,
+            where + ".key",
+            "is '"
+                + key
+                + "', which is one of this platform's own servers ("
+                + String.join(", ", RESERVED_SERVER_KEYS)
+                + "). An external entry under that name would displace it silently");
+      }
+      if (keys.contains(key)) {
+        throw invalid(origin, where + ".key", "attaches '" + key + "' a second time");
+      }
+      keys.add(key);
+      String url = server.path("url").asText("").trim();
+      if (url.isEmpty()) {
+        throw invalid(origin, where + ".url", "must be an http(s) url");
+      }
+      String headerName = server.path("headerName").asText("").trim();
+      String headerValue = server.path("headerValue").asText("");
+      if (headerName.isEmpty() != headerValue.isEmpty()) {
+        // Never naming the value, in a message that ends up in a log.
+        throw invalid(
+            origin,
+            where,
+            "sets a header name without a value or a value without a name; a server presents both"
+                + " or neither");
+      }
+      external.add(
+          new AgentExternalMcpServer(
+              key, url, headerName, headerValue, allowedTools(server, origin, where)));
+    }
+    return List.copyOf(external);
   }
 
   private static List<AgentMcpAttachment> parseAttachments(Json entry, String origin, String at) {

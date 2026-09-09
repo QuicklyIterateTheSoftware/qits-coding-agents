@@ -296,6 +296,27 @@ public class KimiCodeAgent extends CodingAgent {
    * the ACP chat launch, which builds its allowlist from the same {@code READ_ONLY_*} lists.
    */
   public static List<String> stripServerPrefix(String serverKey, List<String> tools) {
+    return stripServerPrefix(serverKey, tools, false);
+  }
+
+  /**
+   * {@link #stripServerPrefix(String, List)}, optionally keeping the names that carry no prefix.
+   *
+   * <p>The built-in lists are shipped constants and every entry is prefixed, so a name without one
+   * is a mistake and dropping it is right. An <b>external catalog</b> server's list is typed by an
+   * operator, who will reasonably write either form; keeping the bare names means the same catalog
+   * entry pre-approves the same tools on both harnesses instead of silently approving none on Kimi.
+   */
+  public static List<String> stripServerPrefix(
+      String serverKey, List<String> tools, boolean keepUnprefixed) {
+    if (keepUnprefixed) {
+      String prefix = "mcp__" + serverKey + "__";
+      List<String> result = new ArrayList<>();
+      for (String tool : tools) {
+        result.add(tool.startsWith(prefix) ? tool.substring(prefix.length()) : tool);
+      }
+      return result;
+    }
     String prefix = "mcp__" + serverKey + "__";
     List<String> result = new ArrayList<>();
     for (String tool : tools) {

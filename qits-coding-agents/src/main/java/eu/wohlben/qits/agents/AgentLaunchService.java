@@ -254,7 +254,11 @@ public final class AgentLaunchService {
             pinned.ref(),
             chatTranscriptSweep(),
             protocolFactory,
-            new AgentLaunchMetadata(type.name(), surface.key(), rendered.record().toJson()));
+            new AgentLaunchMetadata(
+                type.name(),
+                surface.key(),
+                rendered.record().toJson(),
+                rendered.redactions()));
     // The live transcript import: the durable head a mid-run re-attach replays from.
     transcriptTail.startTail(command.id(), type);
     // Both turns go over stdin, in order: a stream-json chat only speaks over stdin, so neither can
@@ -310,7 +314,10 @@ public final class AgentLaunchService {
             chatTranscriptSweep(),
             protocolFactory,
             new AgentLaunchMetadata(
-                type.name(), AgentSurface.EPIC_AUTONOMOUS.key(), rendered.record().toJson()));
+                type.name(),
+                AgentSurface.EPIC_AUTONOMOUS.key(),
+                rendered.record().toJson(),
+                rendered.redactions()));
     transcriptTail.startTail(command.id(), type);
     // The bootstrap rides stdin as the first user turn (a chat only speaks over stdin); the agent
     // then pulls the real composed prompt back over MCP via taskPrompt. It is this surface's
@@ -354,7 +361,11 @@ public final class AgentLaunchService {
             pinned.commandId(),
             pinned.ref(),
             transcriptSweep(),
-            new AgentLaunchMetadata(type.name(), surface.key(), rendered.record().toJson()));
+            new AgentLaunchMetadata(
+                type.name(),
+                surface.key(),
+                rendered.record().toJson(),
+                rendered.redactions()));
     for (String turn : turns.subList(Math.min(1, turns.size()), turns.size())) {
       commands.sendKeystrokes(command.id(), turn);
     }
@@ -664,7 +675,7 @@ public final class AgentLaunchService {
    * A rendered launch and the record of what it was rendered from — the pair every launch path needs,
    * because the command carries both.
    */
-  record Rendered(LaunchSpec spec, AgentLaunchRecord record) {}
+  record Rendered(LaunchSpec spec, AgentLaunchRecord record, List<String> redactions) {}
 
   /** {@link #renderChat} with the launch record beside it. */
   Rendered renderedChat(
@@ -710,13 +721,30 @@ public final class AgentLaunchService {
    */
   AcpSessionConfig buildAcpSessionConfig(
       AgentMcpScope scope, AgentSurface surface, PinnedSession pinned, boolean readOnly) {
+    AgentSurfaceConfiguration configuration = configurationFor(surface);
     List<AcpSessionConfig.AcpMcpServer> servers = new ArrayList<>();
-    for (ScopedMcp server : attachedServers(scope, configurationFor(surface), readOnly)) {
+    List<ScopedMcp> attached = attachedServers(scope, configuration, readOnly);
+    for (ScopedMcp server : attached) {
       servers.add(
           new AcpSessionConfig.AcpMcpServer(
               server.key(),
               server.url(),
               KimiCodeAgent.stripServerPrefix(server.key(), server.allowedTools())));
+    }
+    // Kimi carries servers protocol-native on session/new — (key, url, tools) and now headers — so
+    // an external catalog server rides here rather than through a config file, which is also why the
+    // catalog is url-transport only: there is no place on this message for a stdio command.
+    for (AgentExternalMcpServer server : externalServers(configuration, attached)) {
+      servers.add(
+          new AcpSessionConfig.AcpMcpServer(
+              server.key(),
+              server.url(),
+              // An operator's list, so either form of tool name is honoured — the same entry
+              // pre-approves the same tools on both harnesses.
+              KimiCodeAgent.stripServerPrefix(server.key(), server.allowedTools(), true),
+              server.hasCredential()
+                  ? Map.of(server.headerName(), server.headerValue())
+                  : Map.of()));
     }
     AgentSessionRef ref = pinned.ref();
     String resumeSessionId =
@@ -804,14 +832,58 @@ public final class AgentLaunchService {
     CodingAgent agent = CodingAgentFactory.ofType(agentType);
     List<ScopedMcp> attached = attachedServers(scope, configuration, unattended);
     for (ScopedMcp server : attached) {
+      // Deliberately without agent.allowedTools: no launch shape renders --allowedTools today (every
+      // one of them skips permissions, which makes a pre-approval list moot), and the built-ins'
+      // lists reach a session through the per-server channels instead — Kimi's enabledTools on the
+      // ACP session. Adding them here would move a rendered command line this epic promised not to
+      // move.
       agent.mcpServer(server.key(), McpServers.httpMcp(server.url()));
+    }
+    // The catalog's servers, after the platform's own: the key order is deliberate, because both
+    // harnesses interpolate the serialized object into a shell argument the suites assert literally.
+    // Their pre-approval lists DO render, because an external server is the first case where the
+    // permission mode is likely to be anything but skip — and a prompting session with an
+    // unapproved third-party tool would stop on its first call.
+    for (AgentExternalMcpServer server : externalServers(configuration, attached)) {
+      agent.mcpServer(
+          server.key(),
+          McpServers.httpMcp(
+              server.url(),
+              server.hasCredential() ? Map.of(server.headerName(), server.headerValue()) : Map.of()));
+      agent.allowedTools(server.allowedTools());
     }
     if (interactive && initialContext != null && !initialContext.isBlank()) {
       agent.initialContext(initialContext);
     }
     CodingAgent rendered = configured(agent, agentType, pinned, configuration, interactive);
     LaunchSpec spec = interactive ? rendered.start() : rendered.chat();
-    return new Rendered(spec, launchRecord(configuration, agentType, rendered, attached, interactive));
+    return new Rendered(
+        spec,
+        launchRecord(configuration, agentType, rendered, attached, interactive),
+        // The header values this render just interpolated into the script. The command is stored
+        // with them replaced; the process is spawned with the script as rendered.
+        externalServers(configuration, attached).stream()
+            .filter(AgentExternalMcpServer::hasCredential)
+            .map(AgentExternalMcpServer::headerValue)
+            .toList());
+  }
+
+  /**
+   * What the harness could not render, plus what the <em>host</em> could not: a daemon that has not
+   * adopted {@link AgentMcpServers#serverFor} addressed the attached servers as its scope mapping
+   * builds them, whatever narrowing the document asked for. Recorded rather than silent, because
+   * "which server was this session actually talking to" is precisely what a launch record is for —
+   * and it disappears from every record the day both daemons implement the seam.
+   */
+  private List<String> notes(AgentSurfaceConfiguration configuration, CodingAgent rendered) {
+    if (!configuration.attachesConfiguredServers() || mcpServers.honoursNarrowing()) {
+      return rendered.renderNotes();
+    }
+    List<String> notes = new ArrayList<>(rendered.renderNotes());
+    notes.add(
+        "This daemon does not yet honour per-attachment MCP narrowing, so the attached servers were"
+            + " addressed as its own scope mapping builds them.");
+    return List.copyOf(notes);
   }
 
   /**
@@ -852,9 +924,11 @@ public final class AgentLaunchService {
         remoteControlName,
         configuration.activityTracking(),
         servers,
-        List.of(),
+        // By key. The record is stored, answered by the API and read by whoever can see a session,
+        // and a header value has no business in any of those.
+        configuration.externalMcpServerKeys(),
         !configuration.shipped(),
-        rendered.renderNotes());
+        notes(configuration, rendered));
   }
 
   /**
@@ -976,16 +1050,18 @@ public final class AgentLaunchService {
    */
   private List<ScopedMcp> attachedServers(
       AgentMcpScope scope, AgentSurfaceConfiguration configuration, boolean unattended) {
-    List<ScopedMcp> hosted = mcpServers.serversFor(scope);
     if (!configuration.attachesConfiguredServers()) {
+      List<ScopedMcp> hosted = mcpServers.serversFor(scope);
       return unattended ? hosted.stream().map(AgentLaunchService::markReadOnly).toList() : hosted;
     }
     List<ScopedMcp> attached = new ArrayList<>();
     for (AgentMcpAttachment attachment : configuration.mcpServers()) {
+      // Narrowed as the document asks, by the host — which is the only side that can, because a
+      // narrowed url needs the container's own ids. A host that has not adopted the seam answers its
+      // scope mapping unchanged, and the launch record says the addressing was the host's.
       ScopedMcp server =
-          hosted.stream()
-              .filter(candidate -> candidate.key().equals(attachment.server()))
-              .findFirst()
+          mcpServers
+              .serverFor(attachment.server(), scope, AgentMcpNarrowing.of(attachment))
               .orElseThrow(
                   () ->
                       new InvalidCommandRequestException(
@@ -1005,6 +1081,45 @@ public final class AgentLaunchService {
       attached.add(unattended || attachment.readOnly() ? markReadOnly(resolved) : resolved);
     }
     return List.copyOf(attached);
+  }
+
+  /**
+   * The catalog servers this launch attaches, <b>with the reserved keys checked again at render</b>.
+   *
+   * <p>The store validates this on write, and this is not a second opinion about it: a document can
+   * reach a container from an older service, from a hand-edited mount, or from a store that learned
+   * the rule after the row was written. The failure it prevents is the one that is invisible — both
+   * harnesses render <em>one</em> key-to-config object, so an external entry keyed {@code
+   * repository} does not attach twice, it displaces the platform's own server, and the session looks
+   * entirely normal while talking to somebody else's. That is worth refusing a launch over.
+   *
+   * <p>It also refuses a key that collides with a built-in this launch is actually attaching, which
+   * is the same failure arriving from the other side.
+   */
+  private List<AgentExternalMcpServer> externalServers(
+      AgentSurfaceConfiguration configuration, List<ScopedMcp> attached) {
+    List<AgentExternalMcpServer> external = configuration.externalMcpServers();
+    if (external.isEmpty()) {
+      return external;
+    }
+    for (AgentExternalMcpServer server : external) {
+      String key = server.key() == null ? "" : server.key().toLowerCase(java.util.Locale.ROOT);
+      boolean displacesBuiltIn =
+          AgentConfigurationDocument.RESERVED_SERVER_KEYS.contains(key)
+              || attached.stream().anyMatch(builtIn -> builtIn.key().equalsIgnoreCase(key));
+      if (displacesBuiltIn) {
+        throw new InvalidCommandRequestException(
+            "The "
+                + configuration.surface()
+                + " configuration attaches an external MCP server keyed '"
+                + server.key()
+                + "', which is one of this platform's own ("
+                + String.join(", ", AgentConfigurationDocument.RESERVED_SERVER_KEYS)
+                + "). It would displace it silently and the session would look normal while talking"
+                + " to somebody else's server.");
+      }
+    }
+    return external;
   }
 
   /** The same server with its url read-only marked. */

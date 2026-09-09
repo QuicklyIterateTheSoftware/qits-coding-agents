@@ -23,8 +23,34 @@ public record AcpSessionConfig(
     Consumer<String> onSessionId) {
 
   /**
-   * One scoped MCP server as ACP carries it: a stable {@code name}, the HTTP {@code url}, and the
-   * bare (prefix-stripped) tool names allowed on it.
+   * One scoped MCP server as ACP carries it: a stable {@code name}, the HTTP {@code url}, the
+   * bare (prefix-stripped) tool names allowed on it, and — for an external catalog server — the
+   * headers it presents its credential in.
    */
-  public record AcpMcpServer(String name, String url, List<String> enabledTools) {}
+  public record AcpMcpServer(
+      String name, String url, List<String> enabledTools, java.util.Map<String, String> headers) {
+
+    /** A platform server: no credential of its own, because its url already carries the scope. */
+    public AcpMcpServer(String name, String url, List<String> enabledTools) {
+      this(name, url, enabledTools, java.util.Map.of());
+    }
+
+    public AcpMcpServer {
+      headers = headers == null ? java.util.Map.of() : java.util.Map.copyOf(headers);
+    }
+
+    /** Everything but the credential — an ACP session config is logged like any other object. */
+    @Override
+    public String toString() {
+      return "AcpMcpServer[name="
+          + name
+          + ", url="
+          + url
+          + ", enabledTools="
+          + enabledTools
+          + ", headers="
+          + headers.keySet()
+          + "]";
+    }
+  }
 }

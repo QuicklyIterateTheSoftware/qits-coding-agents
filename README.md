@@ -37,9 +37,9 @@ interface the host implements:
 | Seam | What the host answers |
 | --- | --- |
 | `CheckoutContext` | The branch and commit currently checked out. Nothing else — a daemon's own identity (project id, repo id, workspace id) is its own business, and it declares its own interface extending this one. |
-| `AgentMcpServers` | `List<ScopedMcp> serversFor(AgentMcpScope)` — which MCP servers a scope attaches, each already narrowed, each with its pre-approval list. |
+| `AgentMcpServers` | `serversFor(AgentMcpScope)` — which MCP servers a scope attaches, each already narrowed, each with its pre-approval list — and `serverFor(key, scope, narrowing)`, which answers one server narrowed as a surface's configuration asks. The second is what a host must implement to honour the editor's narrowing checkboxes; until it does, `honoursNarrowing()` is false and every launch that attaches servers records that its addressing was the host's. |
 | `McpEndpoints` | Where an MCP server lives, and which project this container serves. |
-| `AgentDefaults` | The instance-level preferences a launch falls back on: default harness, activity tracking, refinement model — and, since the configuration epic, the mounted per-surface configuration document (`surfaceConfigurations()`, read once at boot from a path the host passes in). |
+| `AgentDefaults` | The instance-level preferences a launch falls back on: default harness, activity tracking, refinement model — and, since the configuration epic, the mounted per-surface configuration document (`surfaceConfigurations()`, read once at boot from a path the host passes in) and the container's own ambient facts (`ambientFacts()`, which fill an initial prompt's `{{epic}}`/`{{workspace}}`/`{{ticket}}`). |
 | `ActionResolver` | The action table, read from the checkout's own `.qits-config.yml`. |
 | `AgentCommands` | The command-launching surface `AgentLaunchService` spawns through. |
 
@@ -70,11 +70,31 @@ shipped default beside it, not a migration. An unknown surface is refused like a
 crutch rather than a contract.
 
 Each surface's configuration — harness, model, effort, remote control, permission mode, activity
-tracking, system prompt, initial prompt, and which built-in MCP servers attach — is stored and
-edited in qits-projects and mounted into a container as one JSON document when it is created.
+tracking, system prompt, initial prompt, and which MCP servers attach — is stored and edited in
+qits-projects and mounted into a container as one JSON document when it is created.
 `AgentConfigurationDocument.readFrom(path)` reads it at boot. **Absent is not broken**: no document
 means a container created before this shipped, and the launch falls back to the constants this
-library still ships. A *malformed* one throws at boot naming the offending key.
+library still ships. A *malformed* one throws at boot naming the offending key. The document is at
+**version 2**, whose surface entry wraps the configuration beside the fully rendered external
+servers; version 1's flat entry is still read, because a container created between those releases
+keeps what it was born with for its whole life.
+
+Three of those knobs are worth a sentence each:
+
+- **model and effort** render on every surface, honestly per harness. Claude takes `--model` and
+  `--effort`; Kimi takes `-m`, has no effort concept at all, and a configured effort renders nothing
+  and is *reported* on the launch record rather than passed as an unknown flag or dropped in silence;
+- **remote control** is one knob and two mechanisms, the opposite way round from the intuition. A
+  chat asks for its bridge over the SDK control channel (`--remote-control` is dropped under
+  `--print`); an interactive launch takes `--remote-control "qits <surface> <branch>"`, named so a
+  platform session is not one hostname among many in the claude.ai session list. It is never
+  validated against the launch shape: when the knob is on, the flag is set;
+- the **initial prompt** is the session's own first turn, before anything the caller composed, and is
+  templated over the container's ambient facts (`{{project}}`, `{{epic}}`, `{{repository}}`,
+  `{{branch}}`, `{{workspace}}`, `{{ticket}}`, `{{commit}}`) with an unresolvable name left literal.
+  The task-prompt bootstrap sentence the two composed runs push is exactly that value, seeded per
+  surface by the store; the host's own sentence stays as the fallback for a container with no
+  document.
 
 The line through the MCP wiring is worth stating, because it crosses the `AgentMcpServers` seam:
 
@@ -87,9 +107,51 @@ The line through the MCP wiring is worth stating, because it crosses the `AgentM
 So a configured attachment is looked up in what the host offers for the launch's scope. A
 configuration naming a server the host does not serve at that scope **refuses the launch** rather
 than dropping it silently — a session missing a server it was configured with looks entirely normal
-and simply cannot do half its job. The attachment's `narrow*` flags are carried and validated but
-not rendered: honouring them needs a seam that maps a key *plus a narrowing* to a url, and inventing
-a url here is the one thing this module refuses outright.
+and simply cannot do half its job. The attachment's `narrow*` flags cross the same seam, through
+`AgentMcpServers.serverFor(key, scope, narrowing)`: the host builds the url with exactly the
+narrowing the document asked for, in the canonical `projectId`, `repositoryId`, `workspaceId` order,
+refusing a narrowing it cannot satisfy rather than dropping the parameter. Its default
+implementation ignores the narrowing and answers the scope's own mapping, so a daemon that has not
+adopted the seam keeps rendering what it rendered — flagged, not silent: `honoursNarrowing()` is
+false and each such launch records a note saying its addressing was the host's rather than the
+document's.
+
+Beside the platform's own three servers, a surface can attach **external MCP servers** from the
+catalog qits-projects holds. They arrive in the document fully rendered — url and header value
+already resolved, so a container needs no second lookup — and they render into Claude's single
+`--strict-mcp-config --mcp-config` object and onto Kimi's ACP `session/new`, after the built-ins,
+because both harnesses interpolate the serialized form into a shell argument the suites assert
+literally. Three rules travel with them:
+
+- `repository`, `actions` and `observability` are **reserved**, checked again at render and not only
+  at the store's write door. An external entry under one of those names does not attach twice, it
+  displaces the platform's own server in the one key-to-config object, and the session looks entirely
+  normal while talking to somebody else's;
+- a **header value is never stored**. The process is spawned with the script as rendered; the command
+  keeps that script with each header value replaced (`AgentLaunchMetadata.redact`), the launch record
+  names attached servers **by key**, and `AgentExternalMcpServer.toString` redacts;
+- url transport only, because Kimi carries servers protocol-native over ACP and has no place for a
+  stdio command.
+
+Each launch **records what it ran with** on the command — surface, harness, model, effort, permission
+mode, remote control, activity tracking, the attached servers with their fences, and whatever the
+harness could not render. That is what makes "a container keeps the document it was born with, and an
+edit applies to the next container" a safe rule rather than an opaque one: the store can be edited at
+any time, so a session that behaved oddly last week is unreadable off anything else.
+
+Beside "render a launch", the library **reports what a harness can be configured with**
+(`HarnessCapabilities`, via `HarnessCapabilityService`): its models, its effort levels or the fact
+that it has none, its version, and whether anybody is signed in on the shared credential volume. It
+is produced by running the binaries once at container start, off the request path, because the
+binaries live in the image and the editor is a platform-wide route with no container in front of it.
+Every probe command sits beside its parser with a fixture of the binary's real output, so a harness
+upgrade that changes its help text fails a test rather than quietly emptying the editor's dropdowns.
+The report says which values it **enumerated**, not which are legal — a launch renders whatever
+string the configuration holds.
+
+Authentication is part of that report, and a launch against a harness nobody has signed in
+**refuses** (`AgentNotSignedInException`) instead of quietly becoming the sign-in terminal it used to
+return. `launchLogin` stays as a door; what went is the substitution.
 
 A container keeps what it was born with. An edit applies to the next container; that is not surfaced
 anywhere, and it is what keeps the launch path a pure local render with no runtime dependency on the

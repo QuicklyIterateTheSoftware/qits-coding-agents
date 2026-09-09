@@ -350,6 +350,13 @@ public final class AcpChatProtocol implements ChatProtocol {
       if (server.enabledTools() != null && !server.enabledTools().isEmpty()) {
         node.put("enabledTools", new JsonArray(server.enabledTools()));
       }
+      if (!server.headers().isEmpty()) {
+        // An external catalog server's credential. Last, and only when there is one, so a platform
+        // server's node is byte for byte what it was before external servers existed.
+        JsonObject headers = new JsonObject();
+        server.headers().forEach(headers::put);
+        node.put("headers", headers);
+      }
       servers.add(node);
     }
     return servers;

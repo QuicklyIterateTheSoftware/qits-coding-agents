@@ -63,10 +63,155 @@ class AgentConfigurationDocumentTest {
       }
       """;
 
+  /**
+   * A <b>version-1</b> document: the surface record flat in the array. Nothing writes this shape any
+   * more — the service moved to version 2 when the external catalog landed — and it is still read,
+   * because a container created between those two releases keeps what it was born with for its whole
+   * life.
+   */
   private static String document(String... surfaces) {
     return "{\"version\":1,\"generatedAt\":\"2026-09-09T10:00:00Z\",\"surfaces\":["
         + String.join(",", surfaces)
         + "]}";
+  }
+
+  /** A version-2 document: each entry is {@code {configuration, externalMcpServers}}. */
+  private static String documentV2(String... entries) {
+    return "{\"version\":2,\"generatedAt\":\"2026-09-09T10:00:00Z\",\"surfaces\":["
+        + String.join(",", entries)
+        + "]}";
+  }
+
+  /** One version-2 entry wrapping {@code configuration} beside its rendered external servers. */
+  private static String entry(String configuration, String externalServers) {
+    return "{\"configuration\":" + configuration + ",\"externalMcpServers\":[" + externalServers + "]}";
+  }
+
+  private static final String STRIPE_SERVER =
+      """
+      {
+        "key": "stripe",
+        "url": "https://mcp.stripe.com/v1",
+        "headerName": "Authorization",
+        "headerValue": "Bearer sk-live-not-a-real-token",
+        "allowedTools": ["mcp__stripe__listCustomers"]
+      }
+      """;
+
+  @Nested
+  class TheExternalCatalog {
+
+    @Test
+    void aVersionTwoSurfaceCarriesItsServersFullyRendered() {
+      // The one shape on this platform that carries a credential's value, which is why the document
+      // is a mounted file rather than an environment variable.
+      AgentConfigurationDocument document =
+          AgentConfigurationDocument.parse(
+              documentV2(entry(SEEDED_EPIC_CHAT, STRIPE_SERVER)), "test");
+
+      AgentSurfaceConfiguration surface = document.surfaces().get("epic.chat");
+      assertEquals(1, surface.externalMcpServers().size());
+      AgentExternalMcpServer stripe = surface.externalMcpServers().get(0);
+      assertEquals("stripe", stripe.key());
+      assertEquals("https://mcp.stripe.com/v1", stripe.url());
+      assertEquals("Authorization", stripe.headerName());
+      assertEquals("Bearer sk-live-not-a-real-token", stripe.headerValue());
+      assertEquals(List.of("mcp__stripe__listCustomers"), stripe.allowedTools());
+      assertTrue(stripe.hasCredential());
+      assertEquals(List.of("stripe"), surface.externalMcpServerKeys());
+      // And the configuration inside the wrapper is read exactly as version 1 read it flat.
+      assertEquals(2, surface.mcpServers().size());
+      assertTrue(surface.remoteControl());
+    }
+
+    @Test
+    void theCredentialCannotLeakThroughAToString() {
+      // A record's default toString prints every component, and this object travels a launch path
+      // whose neighbours are logged as a matter of course.
+      AgentExternalMcpServer stripe =
+          AgentConfigurationDocument.parse(documentV2(entry(SEEDED_EPIC_CHAT, STRIPE_SERVER)), "test")
+              .surfaces()
+              .get("epic.chat")
+              .externalMcpServers()
+              .get(0);
+
+      assertFalse(stripe.toString().contains("sk-live"), stripe.toString());
+      assertTrue(stripe.toString().contains("<redacted>"), stripe.toString());
+      assertFalse(
+          AgentConfigurationDocument.parse(documentV2(entry(SEEDED_EPIC_CHAT, STRIPE_SERVER)), "test")
+              .toString()
+              .contains("sk-live"),
+          "and not through the document that holds it either");
+    }
+
+    @Test
+    void aReservedKeyIsRefusedAtBootAsWellAsOnWrite() {
+      // The store validates this on write; a document can still reach a container from an older
+      // service. An entry keyed 'repository' does not attach twice — both harnesses render one
+      // key-to-config object, so it DISPLACES the platform's server and the session looks normal.
+      InvalidAgentConfigurationException refused =
+          assertThrows(
+              InvalidAgentConfigurationException.class,
+              () ->
+                  AgentConfigurationDocument.parse(
+                      documentV2(
+                          entry(
+                              SEEDED_EPIC_CHAT,
+                              "{\"key\":\"repository\",\"url\":\"https://elsewhere.example\"}")),
+                      "/etc/qits/agent-configuration.json"));
+
+      assertTrue(refused.getMessage().contains("externalMcpServers[0].key"), refused.getMessage());
+      assertTrue(refused.getMessage().contains("displace it silently"), refused.getMessage());
+      assertEquals(
+          List.of("repository", "actions", "observability"),
+          AgentConfigurationDocument.RESERVED_SERVER_KEYS);
+    }
+
+    @Test
+    void everyOtherWayAnExternalEntryCanBeWrongNamesItsKey() {
+      assertTrue(
+          refusalFor("{\"url\":\"https://a.example\"}").contains("externalMcpServers[0].key"));
+      assertTrue(refusalFor("{\"key\":\"a\"}").contains("externalMcpServers[0].url"));
+      assertTrue(
+          refusalFor("{\"key\":\"a\",\"url\":\"https://a.example\"},{\"key\":\"a\",\"url\":\"https://b.example\"}")
+              .contains("a second time"));
+    }
+
+    @Test
+    void aHeaderWithoutAValueIsRefusedAndTheMessageQuotesNoValue() {
+      // A server attached with half a credential 401s on the agent's first tool call, which surfaces
+      // as a confused agent hours later rather than as an error anybody reads. And the refusal is
+      // logged, so it names the shape and never the value.
+      String refusal =
+          refusalFor(
+              "{\"key\":\"a\",\"url\":\"https://a.example\",\"headerName\":\"Authorization\"}");
+      assertTrue(refusal.contains("presents both"), refusal);
+
+      String reverse =
+          refusalFor(
+              "{\"key\":\"a\",\"url\":\"https://a.example\",\"headerValue\":\"sk-live-secret\"}");
+      assertFalse(reverse.contains("sk-live-secret"), reverse);
+    }
+
+    @Test
+    void aSurfaceThatAttachesNoneHasNoneRatherThanNull() {
+      assertEquals(
+          List.of(),
+          AgentConfigurationDocument.parse(document(SEEDED_EPIC_CHAT), "test")
+              .surfaces()
+              .get("epic.chat")
+              .externalMcpServers(),
+          "a version-1 document is read as a document with no external servers");
+    }
+
+    private String refusalFor(String externalServers) {
+      return assertThrows(
+              InvalidAgentConfigurationException.class,
+              () ->
+                  AgentConfigurationDocument.parse(
+                      documentV2(entry(SEEDED_EPIC_CHAT, externalServers)), "test"))
+          .getMessage();
+    }
   }
 
   private Path write(String json) throws IOException {

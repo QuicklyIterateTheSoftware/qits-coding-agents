@@ -1,5 +1,6 @@
 package eu.wohlben.qits.agents;
 
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -32,10 +33,11 @@ import java.util.Optional;
  * </ul>
  *
  * <p>The initial prompt is empty here even for the two composed runs, which do push a bootstrap
- * sentence today: that sentence is the host's {@code taskPromptBootstrap} constructor argument
- * (the projects daemon says "this project" where the workspace daemon says "this workspace"), and
- * folding it into a shipped configuration would pick a winner between two live literals. Task
- * d517c81a is where the two meet.
+ * sentence: that sentence is the host's {@code taskPromptBootstrap} constructor argument — the
+ * projects daemon says "this project" where the workspace daemon says "this workspace" — and folding
+ * it into a shipped configuration would pick a winner between two live literals. The store seeds it
+ * per surface instead, each with its own daemon's noun, and {@code
+ * AgentLaunchService.taskPromptTurn} takes the configured value over the host's when there is one.
  */
 public final class AgentSurfaceConfigurations {
 
@@ -137,6 +139,9 @@ public final class AgentSurfaceConfigurations {
         shippedSystemPrompt(surface),
         "",
         null,
+        // No external servers, and there never can be a shipped one: the catalog is operator-defined
+        // and starts empty, so a constant naming an entry would name a row nobody has created.
+        List.of(),
         true);
   }
 }

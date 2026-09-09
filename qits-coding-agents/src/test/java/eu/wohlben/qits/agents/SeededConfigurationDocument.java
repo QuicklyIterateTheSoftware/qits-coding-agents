@@ -30,20 +30,27 @@ final class SeededConfigurationDocument {
       attachments.add(server);
     }
     surfaces.add(
+        // The version-2 shape: the configuration the editor reads, wrapped beside the external
+        // servers the container gets fully rendered. qits-projects writes exactly this.
         new JsonObject()
-            .put("surface", surface.key())
-            .put("harness", "CLAUDE")
-            // Empty for every surface: no launch shape passes --model or --effort today.
-            .put("model", "")
-            .put("effort", "")
-            .put("remoteControl", remoteControl)
-            // Every launch shape in both daemons calls skipPermissions(), unconditionally.
-            .put("permissionMode", "SKIP_PERMISSIONS")
-            .put("activityTracking", true)
-            .put("systemPrompt", systemPrompt)
-            .put("initialPrompt", "")
-            .put("mcpServers", attachments)
-            .put("shipped", true));
+            .put(
+                "configuration",
+                new JsonObject()
+                    .put("surface", surface.key())
+                    .put("harness", "CLAUDE")
+                    // Empty for every surface: no launch shape passes --model or --effort today.
+                    .put("model", "")
+                    .put("effort", "")
+                    .put("remoteControl", remoteControl)
+                    // Every launch shape in both daemons calls skipPermissions(), unconditionally.
+                    .put("permissionMode", "SKIP_PERMISSIONS")
+                    .put("activityTracking", true)
+                    .put("systemPrompt", systemPrompt)
+                    .put("initialPrompt", "")
+                    .put("mcpServers", attachments)
+                    .put("externalMcpServers", new JsonArray())
+                    .put("shipped", true))
+            .put("externalMcpServers", new JsonArray()));
     return this;
   }
 
@@ -61,6 +68,27 @@ final class SeededConfigurationDocument {
         .put("narrowWorkspace", narrowWorkspace)
         .put("readOnly", readOnly)
         .put("allowedTools", new JsonArray(allowedTools));
+  }
+
+  /** One external catalog server, fully rendered, as the document carries it. */
+  static JsonObject external(
+      String key, String url, String headerName, String headerValue, List<String> allowedTools) {
+    return new JsonObject()
+        .put("key", key)
+        .put("url", url)
+        .put("headerName", headerName)
+        .put("headerValue", headerValue)
+        .put("allowedTools", new JsonArray(allowedTools));
+  }
+
+  /** The last-added surface, with these external servers attached. */
+  SeededConfigurationDocument attaching(JsonObject... external) {
+    JsonArray attached = new JsonArray();
+    for (JsonObject server : external) {
+      attached.add(server);
+    }
+    surfaces.getJsonObject(surfaces.size() - 1).put("externalMcpServers", attached);
+    return this;
   }
 
   /** The document as a container receives it, parsed into the resolution source. */

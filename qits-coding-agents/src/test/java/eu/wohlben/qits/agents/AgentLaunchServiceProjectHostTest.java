@@ -1256,6 +1256,314 @@ class AgentLaunchServiceProjectHostTest {
     }
   }
 
+  // --- the narrowing seam -----------------------------------------------------------------------
+
+  /**
+   * {@code narrowProject}/{@code narrowRepository}/{@code narrowWorkspace} were read, validated and
+   * then not rendered: the library cannot build a narrowed url without ids it must not know. They
+   * are now the host's to honour, through {@link AgentMcpServers#serverFor}, and a host that has not
+   * adopted the seam says so on every launch that attaches servers rather than looking as if it had.
+   */
+  @Nested
+  class NarrowingSeam {
+
+    /** A host that implements the seam — what both daemons must now do. */
+    private final class NarrowingHost implements AgentMcpServers {
+      @Override
+      public List<ScopedMcp> serversFor(AgentMcpScope scope) {
+        return MCP_SERVERS.serversFor(scope);
+      }
+
+      @Override
+      public Optional<ScopedMcp> serverFor(
+          String key, AgentMcpScope scope, AgentMcpNarrowing narrowing) {
+        if (!"repository".equals(key)) {
+          return Optional.empty();
+        }
+        StringBuilder url = new StringBuilder("http://qits:8080/projects/mcp");
+        // The canonical order — projectId, repositoryId, workspaceId — because the rendered command
+        // line is asserted as a literal on both harnesses.
+        if (narrowing.project()) {
+          url.append("?projectId=").append(AgentMcpIds.requireId(PROJECT, "projectId"));
+        }
+        if (narrowing.repository()) {
+          url.append(url.indexOf("?") < 0 ? "?" : "&")
+              .append("repositoryId=")
+              .append(AgentMcpIds.requireId(REPO, "repositoryId"));
+        }
+        if (narrowing.workspace()) {
+          throw new InvalidCommandRequestException(
+              "This container serves no workspace, so the repository server cannot be narrowed to"
+                  + " one");
+        }
+        return Optional.of(
+            new ScopedMcp(key, url.toString(), ProjectHostMcpServers.READ_ONLY_REPOSITORY_TOOLS));
+      }
+
+      @Override
+      public boolean honoursNarrowing() {
+        return true;
+      }
+    }
+
+    @Test
+    void anAdoptedHostBuildsTheUrlTheDocumentAsksFor() {
+      AgentLaunchService service = serviceWith(new NarrowingHost());
+      AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
+      configurations = attaching(true, false, false);
+
+      assertTrue(
+          service
+              .renderChat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS, pinned, AgentType.CLAUDE)
+              .script()
+              .contains("mcp?projectId=" + PROJECT + "\"}"),
+          "project only, because that is what the attachment asks for");
+
+      configurations = attaching(true, true, false);
+      assertTrue(
+          service
+              .renderChat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS, pinned, AgentType.CLAUDE)
+              .script()
+              .contains("mcp?projectId=" + PROJECT + "&repositoryId=" + REPO + "\"}"),
+          "and the scope no longer decides it");
+    }
+
+    @Test
+    void aNarrowingTheHostCannotSatisfyRefusesRatherThanDroppingIt() {
+      // Dropping the parameter would answer for the whole project where the document asked for one
+      // workspace — a session that looks normal and is addressed wider than it was configured.
+      AgentLaunchService service = serviceWith(new NarrowingHost());
+      AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
+      configurations = attaching(true, false, true);
+
+      assertThrows(
+          InvalidCommandRequestException.class,
+          () ->
+              service.renderChat(
+                  AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS, pinned, AgentType.CLAUDE));
+    }
+
+    @Test
+    void anUnadoptedHostRendersWhatItAlwaysDidAndTheRecordSaysSo() {
+      // The dated half: a daemon picks up a new library at its next release, so a host that has not
+      // implemented serverFor keeps rendering its scope mapping. Visible rather than silent.
+      configurations = attaching(true, true, true);
+
+      Command command = service().launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS));
+
+      assertTrue(
+          commands.last().script().contains("mcp?projectId=" + PROJECT + "\"}"),
+          "the PROJECT scope's own url, whatever the attachment asked for");
+      assertTrue(
+          new JsonObject(command.agentLaunchRecord())
+              .getJsonArray("notes")
+              .encode()
+              .contains("does not yet honour per-attachment MCP narrowing"),
+          command.agentLaunchRecord());
+    }
+
+    @Test
+    void aSurfaceThatConfiguresNoServersIsNotNagged() {
+      // The note belongs to a launch whose document asked for a narrowing. A container with no
+      // document asked for nothing and takes the host's mapping by definition.
+      Command command = service().launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS));
+
+      assertEquals(0, new JsonObject(command.agentLaunchRecord()).getJsonArray("notes").size());
+    }
+
+    private AgentSurfaceConfigurations attaching(
+        boolean project, boolean repository, boolean workspace) {
+      return new SeededConfigurationDocument()
+          .surface(
+              AgentSurface.PROJECT_EPICS,
+              false,
+              "",
+              SeededConfigurationDocument.server(
+                  "repository", project, repository, workspace, false, List.of()))
+          .configurations();
+    }
+  }
+
+  // --- external MCP servers ---------------------------------------------------------------------
+
+  /**
+   * The catalog's servers, rendered beside the platform's own — and the two rules that keep that
+   * safe: a reserved key is refused at render as well as on write, and a header value never reaches
+   * anything that is stored, logged or answered.
+   */
+  @Nested
+  class ExternalMcpServers {
+
+    private static final String STRIPE_TOKEN = "Bearer sk-live-not-a-real-token";
+
+    @Test
+    void theyJoinClaudesOneMcpConfigAfterThePlatformsOwn() {
+      // One --strict-mcp-config object is the whole set a session may use, so an external server has
+      // to be IN it — and after the built-ins, because both harnesses interpolate the serialized
+      // form into a shell argument and the suites assert the command line literally.
+      AgentLaunchService service = service();
+      AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
+      configurations = withStripe();
+
+      String script =
+          service
+              .renderChat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS, pinned, AgentType.CLAUDE)
+              .script();
+
+      assertTrue(
+          script.contains(
+              "\"stripe\":{\"type\":\"http\",\"url\":\"https://mcp.stripe.com/v1\","
+                  + "\"headers\":{\"Authorization\":\"" + STRIPE_TOKEN + "\"}}"),
+          script);
+      assertTrue(
+          script.indexOf("\"repository\":") < script.indexOf("\"stripe\":"),
+          "the platform's own first, deliberately");
+      assertTrue(
+          script.contains("--allowedTools 'mcp__stripe__listCustomers'"),
+          "an external server's pre-approval renders: it is the first case where the permission mode"
+              + " is likely to be anything but skip");
+      assertEquals(1, script.split("\"mcpServers\"", -1).length - 1, "still one object");
+    }
+
+    @Test
+    void aServerWithNoCredentialRendersExactlyAsAPlatformOneDoes() {
+      AgentLaunchService service = service();
+      AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
+      configurations =
+          new SeededConfigurationDocument()
+              .surface(AgentSurface.PROJECT_EPICS, false, "")
+              .attaching(
+                  SeededConfigurationDocument.external(
+                      "docs", "https://docs.example/mcp", "", "", List.of()))
+              .configurations();
+
+      String script =
+          service
+              .renderChat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS, pinned, AgentType.CLAUDE)
+              .script();
+
+      assertTrue(
+          script.contains("\"docs\":{\"type\":\"http\",\"url\":\"https://docs.example/mcp\"}"), script);
+      assertFalse(script.contains("headers"), "no credential means no headers key at all");
+    }
+
+    @Test
+    void theyRideKimisAcpSessionWithTheirHeaders() {
+      // Kimi carries servers protocol-native on session/new — which is also why the catalog is url
+      // transport only: there is no place on that message for a stdio command.
+      AgentLaunchService service = service();
+      AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.KIMI);
+      configurations = withStripe();
+
+      AcpSessionConfig config =
+          service.buildAcpSessionConfig(
+              AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS, pinned);
+
+      assertEquals(2, config.mcpServers().size());
+      AcpSessionConfig.AcpMcpServer stripe = config.mcpServers().get(1);
+      assertEquals("stripe", stripe.name());
+      assertEquals(Map.of("Authorization", STRIPE_TOKEN), stripe.headers());
+      assertEquals(
+          List.of("listCustomers"),
+          stripe.enabledTools(),
+          "kimi takes bare names, and an operator's list is honoured in either form");
+      assertEquals(Map.of(), config.mcpServers().get(0).headers(), "a platform server has none");
+      assertFalse(stripe.toString().contains("sk-live"), stripe.toString());
+    }
+
+    @Test
+    void aReservedKeyRefusesTheLaunchAtRenderToo() {
+      // The store validates on write, but a document can reach a container from an older service —
+      // and a displaced 'repository' server is the silent, dangerous one: the session looks entirely
+      // normal and is talking to somebody else's.
+      AgentLaunchService service = service();
+      AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
+      configurations =
+          AgentSurfaceConfigurations.of(
+              new AgentConfigurationDocument(
+                  2,
+                  "",
+                  Map.of(
+                      AgentSurface.PROJECT_EPICS.key(),
+                      new AgentSurfaceConfiguration(
+                          AgentSurface.PROJECT_EPICS.key(),
+                          AgentType.CLAUDE,
+                          "",
+                          "",
+                          false,
+                          AgentPermissionMode.SKIP_PERMISSIONS,
+                          true,
+                          "",
+                          "",
+                          null,
+                          List.of(
+                              new AgentExternalMcpServer(
+                                  "repository", "https://elsewhere.example", "", "", List.of())),
+                          false))));
+
+      InvalidCommandRequestException refused =
+          assertThrows(
+              InvalidCommandRequestException.class,
+              () ->
+                  service.renderChat(
+                      AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS, pinned, AgentType.CLAUDE));
+
+      assertTrue(refused.getMessage().contains("displace it silently"), refused.getMessage());
+      assertTrue(refused.getMessage().contains("project.epics"), refused.getMessage());
+    }
+
+    @Test
+    void theHeaderValueIsHandedOverForRedactionRatherThanStored() {
+      // The rendered command line is kept on the command, answered by the API and shown on a command
+      // page — which was right for every launch this platform had until a credential started riding
+      // in one. The process is spawned with the script as rendered; what is stored is this.
+      configurations = withStripe();
+
+      service().launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS));
+      AgentLaunchMetadata metadata = commands.last().agent();
+
+      assertEquals(List.of(STRIPE_TOKEN), metadata.redactions());
+      assertFalse(
+          metadata.redact(commands.last().script()).contains("sk-live"),
+          "what a command stores carries no credential");
+      assertTrue(
+          metadata.redact(commands.last().script()).contains("<redacted>"),
+          "and a reader can see that something was withheld");
+      assertTrue(commands.last().script().contains(STRIPE_TOKEN), "the script that RUNS is intact");
+    }
+
+    @Test
+    void theLaunchRecordNamesThemByKeyAndNothingElse() {
+      configurations = withStripe();
+
+      Command command = service().launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS));
+      JsonObject record = new JsonObject(command.agentLaunchRecord());
+
+      assertEquals(List.of("stripe"), record.getJsonArray("externalMcpServers").getList());
+      assertFalse(command.agentLaunchRecord().contains("sk-live"), command.agentLaunchRecord());
+      assertFalse(command.agentLaunchRecord().contains("mcp.stripe.com"));
+    }
+
+    /** The epics desk with the platform's repository server and one catalog entry attached. */
+    private AgentSurfaceConfigurations withStripe() {
+      return new SeededConfigurationDocument()
+          .surface(
+              AgentSurface.PROJECT_EPICS,
+              false,
+              "",
+              SeededConfigurationDocument.server(
+                  "repository", true, false, false, false, List.of()))
+          .attaching(
+              SeededConfigurationDocument.external(
+                  "stripe",
+                  "https://mcp.stripe.com/v1",
+                  "Authorization",
+                  STRIPE_TOKEN,
+                  List.of("mcp__stripe__listCustomers")))
+          .configurations();
+    }
+  }
+
   // --- the launch record ------------------------------------------------------------------------
 
   /**
