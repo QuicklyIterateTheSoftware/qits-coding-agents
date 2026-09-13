@@ -77,6 +77,19 @@
 
         <compiler-plugin.version>3.15.0</compiler-plugin.version>
         <surefire-plugin.version>3.5.4</surefire-plugin.version>
+
+        <!-- REPRODUCIBLE BUILDS. Without this, maven-jar-plugin stamps each jar's manifest and
+             zip entries with the wall-clock time of the build, so two builds of the SAME commit and
+             SAME version produce different bytes. That is not a hypothetical: a release of this
+             repository can fail partway — qits-commands-2026.913.151200.jar deployed, then the SBOM
+             step failed on an unrelated platform gap — and a retry re-runs `mvn deploy` against the
+             same tag and the same version. The store accepts a re-upload of identical bytes, so a
+             retry needs the second build to be byte-identical to the first, and only the timestamp
+             stood in the way. The value below is fixed and arbitrary — CalVer already makes every
+             released version distinct, so this property only has to be the SAME on every build of
+             one commit, not meaningful on its own. maven-jar-plugin honours it from 3.2 on; this
+             reactor's effective version (3.4.1) already does. -->
+        <project.build.outputTimestamp>2026-09-13T00:00:00Z</project.build.outputTimestamp>
     </properties>
 
     <dependencyManagement>
