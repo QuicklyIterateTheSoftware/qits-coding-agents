@@ -421,6 +421,79 @@ class AgentConfigurationDocumentTest {
     }
 
     @Test
+    void theTwoComposedRunsShipTheOrchestrationPromptAndNobodyElseMoves() {
+      // Three surfaces carry steering and five carry none. The composed runs are the two nobody
+      // talks to turn by turn, so "orchestrate and delegate" has to arrive in the shipped prompt or
+      // it never arrives at all; the other six render exactly what they rendered before.
+      assertEquals(
+          AgentLaunchService.COMPOSED_RUN_PROMPT,
+          AgentSurfaceConfigurations.shippedSystemPrompt(AgentSurface.EPIC_AUTONOMOUS));
+      assertEquals(
+          AgentLaunchService.COMPOSED_RUN_PROMPT,
+          AgentSurfaceConfigurations.shippedSystemPrompt(AgentSurface.TICKET_DISPATCH));
+      assertEquals(
+          AgentLaunchService.TICKETS_DESK_PROMPT,
+          AgentSurfaceConfigurations.shippedSystemPrompt(AgentSurface.PROJECT_TICKETS));
+
+      for (AgentSurface surface :
+          List.of(
+              AgentSurface.PROJECT_EPICS,
+              AgentSurface.EPIC_CHAT,
+              AgentSurface.EPIC_AGENT,
+              AgentSurface.WORKSPACE_CHAT,
+              AgentSurface.WORKSPACE_AGENT)) {
+        assertEquals(
+            "",
+            AgentSurfaceConfigurations.shippedSystemPrompt(surface),
+            surface + " steers with nothing, and this task did not change that");
+      }
+    }
+
+    @Test
+    void theComposedRunPromptSaysTheThreeThingsItIsFor() {
+      // An identical copy is seeded by qits-projects and compared against this literal there. These
+      // are the three instructions the ticket asked for, asserted so a reflow cannot drop one.
+      String prompt = AgentLaunchService.COMPOSED_RUN_PROMPT;
+
+      assertTrue(prompt.startsWith("You are orchestrating this run rather than typing it."), prompt);
+      assertTrue(prompt.contains("hand each one to a subagent"), prompt);
+      assertTrue(prompt.contains("Sonnet for mechanical, narrow, well-specified edits"), prompt);
+      assertTrue(prompt.contains("Opus for anything wide, ambiguous or architecturally"), prompt);
+      assertTrue(prompt.contains("Delegating the work does not delegate the verification."), prompt);
+      assertFalse(prompt.endsWith("\n"), "a text block appendix ends where the sentence does");
+    }
+
+    @Test
+    void anOperatorWhoClearsTheBoxGetsAnUnsteeredComposedRun() {
+      // Data, not behaviour: the prompt is the fallback a container born without a document takes,
+      // and an emptied row wins over it the same way it does on every other surface.
+      AgentSurfaceConfigurations configurations =
+          AgentSurfaceConfigurations.of(
+              AgentConfigurationDocument.parse(
+                  document(
+                      """
+                      {
+                        "surface": "epic.autonomous",
+                        "harness": "CLAUDE",
+                        "model": "",
+                        "effort": "",
+                        "remoteControl": true,
+                        "permissionMode": "SKIP_PERMISSIONS",
+                        "activityTracking": true,
+                        "systemPrompt": "",
+                        "initialPrompt": "",
+                        "mcpServers": []
+                      }"""),
+                  "test"));
+
+      AgentSurfaceConfiguration autonomous =
+          configurations.resolve(AgentSurface.EPIC_AUTONOMOUS, AgentType.CLAUDE, true);
+
+      assertFalse(autonomous.shipped());
+      assertEquals("", autonomous.systemPrompt());
+    }
+
+    @Test
     void theShippedFallbackTakesTheHostsOwnDefaults() {
       // A library that shipped an attachment table would be a library that knows which product it
       // is inside; a library that shipped an activity-tracking boolean would override a daemon

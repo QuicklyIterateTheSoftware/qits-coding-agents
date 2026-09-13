@@ -17,8 +17,8 @@ import java.util.Optional;
  * <ul>
  *   <li>{@link #PROJECT_EPICS} — the refinement agent on a project's epics overview. The projects
  *       daemon's {@code PROJECT}-scoped chat, steered by nothing at all.
- *   <li>{@link #PROJECT_TICKETS} — the triage agent on a project's tickets overview. The one surface
- *       that carries a system prompt today.
+ *   <li>{@link #PROJECT_TICKETS} — the triage agent on a project's tickets overview. It carries a
+ *       system prompt, as the two composed runs below now do.
  *   <li>{@link #EPIC_CHAT} / {@link #EPIC_AGENT} — the refining route's chat and agent tabs.
  *   <li>{@link #WORKSPACE_CHAT} / {@link #WORKSPACE_AGENT} — the workspace detail route's chat and
  *       agents tabs.

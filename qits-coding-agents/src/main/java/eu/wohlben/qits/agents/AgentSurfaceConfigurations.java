@@ -27,9 +27,11 @@ import java.util.Optional;
  *       is the value a container with no document has always used;
  *   <li>the <b>harness</b> is the host's default for the same reason;
  *   <li>the <b>system prompt</b> is the one thing the library genuinely ships: {@link
- *       AgentLaunchService#TICKETS_DESK_PROMPT} for {@link AgentSurface#PROJECT_TICKETS}, and
- *       nothing for every other surface. It was a text block in a {@code switch} arm a release ago
- *       and it still is; the document makes it editable, it does not make it move.
+ *       AgentLaunchService#TICKETS_DESK_PROMPT} for {@link AgentSurface#PROJECT_TICKETS}, {@link
+ *       AgentLaunchService#COMPOSED_RUN_PROMPT} for the two composed runs ({@link
+ *       AgentSurface#EPIC_AUTONOMOUS} and {@link AgentSurface#TICKET_DISPATCH}), and nothing for the
+ *       other five. It was a text block in a {@code switch} arm a release ago and it still is; the
+ *       document makes it editable, it does not make it move.
  * </ul>
  *
  * <p>The initial prompt is empty here even for the two composed runs, which do push a bootstrap
@@ -99,13 +101,30 @@ public final class AgentSurfaceConfigurations {
   }
 
   /**
-   * The system-prompt appendix a surface ships with — empty for every surface but the tickets desk,
-   * which is the one that has to say what it is because it shares every tool with the desk beside
-   * it. The text block itself stays where it has always been, in {@link AgentLaunchService}: this
-   * epic stops it being the <em>only</em> copy, not the last one.
+   * The system-prompt appendix a surface ships with. Three surfaces have one and the other five
+   * steer with nothing:
+   *
+   * <ul>
+   *   <li>the <b>tickets desk</b> has to say what it is, because it shares every tool with the desk
+   *       beside it;
+   *   <li>the <b>two composed runs</b> carry {@link AgentLaunchService#COMPOSED_RUN_PROMPT}, which
+   *       tells an unattended main loop to orchestrate and delegate rather than type the code
+   *       itself — the one instruction nobody is present to give them mid-run.
+   * </ul>
+   *
+   * <p>The text blocks themselves stay where they have always been, in {@link AgentLaunchService}:
+   * this stops them being the <em>only</em> copy, not the last one. Nothing downstream may depend on
+   * a prompt being here — an operator who clears the box gets an unsteered run.
    */
   public static String shippedSystemPrompt(AgentSurface surface) {
-    return AgentSurface.PROJECT_TICKETS.equals(surface) ? AgentLaunchService.TICKETS_DESK_PROMPT : "";
+    if (AgentSurface.PROJECT_TICKETS.equals(surface)) {
+      return AgentLaunchService.TICKETS_DESK_PROMPT;
+    }
+    if (AgentSurface.EPIC_AUTONOMOUS.equals(surface)
+        || AgentSurface.TICKET_DISPATCH.equals(surface)) {
+      return AgentLaunchService.COMPOSED_RUN_PROMPT;
+    }
+    return "";
   }
 
   /**

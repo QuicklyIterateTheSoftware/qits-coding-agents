@@ -1136,6 +1136,33 @@ class AgentLaunchServiceWorkspaceHostTest {
     }
 
     @Test
+    void aDispatchedRunIsSteeredToDelegateRatherThanToTypeTheCode() {
+      // The other half of the ticket, on this host: ticket.dispatch shipped an empty prompt, so a
+      // dispatch wrote everything in the main loop. It is the same constant epic.autonomous gets —
+      // one cut workspace or a whole project makes no difference to how the work is divided.
+      AgentLaunchService service = service();
+      AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
+
+      assertEquals(
+          AgentLaunchService.COMPOSED_RUN_PROMPT,
+          AgentLaunchService.systemPromptFor(AgentSurface.TICKET_DISPATCH));
+
+      configurations = AgentSurfaceConfigurations.shipped();
+      String script =
+          service
+              .renderAutonomousChat(
+                  AgentMcpScope.REPOSITORY, AgentSurface.TICKET_DISPATCH, pinned, AgentType.CLAUDE)
+              .script();
+
+      assertTrue(
+          script.contains("--append-system-prompt 'You are orchestrating this run rather than"),
+          script);
+      assertTrue(
+          script.contains("Sonnet for mechanical, narrow, well-specified edits"),
+          "the model-choice rule is the part a dispatch cannot be told later");
+    }
+
+    @Test
     void aDispatchedRunIsFencedByItsConfigurationRatherThanOnlyByItsShape() {
       // ticket.dispatch is seeded read-only. The shape it launches with is the host's business, so
       // the fence has to be renderable from the row too — otherwise turning the store on would

@@ -577,6 +577,30 @@ class AgentLaunchServiceProjectHostTest {
     }
 
     @Test
+    void theComposedRunCarriesTheOrchestrationPrompt() {
+      // epic.autonomous did all its coding in the main loop because it shipped nothing at all.
+      // Nobody is in that conversation to say "delegate that", so the steering has to be shipped.
+      AgentLaunchService service = service();
+      AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
+
+      assertEquals(
+          AgentLaunchService.COMPOSED_RUN_PROMPT,
+          AgentLaunchService.systemPromptFor(AgentSurface.EPIC_AUTONOMOUS));
+
+      String script =
+          service
+              .renderAutonomousChat(
+                  AgentMcpScope.REPOSITORY, AgentSurface.EPIC_AUTONOMOUS, pinned, AgentType.CLAUDE)
+              .script();
+
+      assertTrue(
+          script.contains("--append-system-prompt 'You are orchestrating this run rather than"),
+          script);
+      assertTrue(script.contains("hand each one to a subagent"), script);
+      assertTrue(script.contains("Delegating the work does not delegate the verification."), script);
+    }
+
+    @Test
     void theEpicsDeskRendersTheNameItAlwaysHad() {
       service().launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS));
 
@@ -1775,11 +1799,11 @@ class AgentLaunchServiceProjectHostTest {
                   false,
                   false,
                   ProjectHostMcpServers.READ_ONLY_REPOSITORY_TOOLS))
-          // The composed run: the same server, read-only marked.
+          // The composed run: the same server, read-only marked, steered to delegate.
           .surface(
               AgentSurface.EPIC_AUTONOMOUS,
               true,
-              "",
+              AgentLaunchService.COMPOSED_RUN_PROMPT,
               SeededConfigurationDocument.server(
                   "repository",
                   true,

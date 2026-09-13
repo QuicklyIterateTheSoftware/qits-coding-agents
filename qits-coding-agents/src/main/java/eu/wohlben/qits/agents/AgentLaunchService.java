@@ -121,6 +121,51 @@ public final class AgentLaunchService {
       and point at the epics desk. Do not file an epic from here.\
       """;
 
+  /**
+   * The steering the two composed runs carry — {@link AgentSurface#EPIC_AUTONOMOUS} and {@link
+   * AgentSurface#TICKET_DISPATCH}. It says the one thing an unattended session cannot be told later:
+   * that the main loop orchestrates rather than types. Read the task prompt and the repository, plan
+   * the work as self-contained programming tasks, hand each to a subagent chosen by scope and
+   * difficulty — Sonnet for the mechanical and narrow, Opus for the wide, ambiguous or
+   * architecturally load-bearing — and then verify it yourself, because a subagent's report is a
+   * claim and not a result.
+   *
+   * <p>These two are the surfaces that need it, and the reason is that nobody is in the conversation.
+   * A desk or a chat is corrected turn by turn: an operator watching a session grind through a
+   * refactor in the main loop says "delegate that" and it does. A composed run is started and read
+   * back at the end, so a main-loop run is only discovered once it has already happened, and the
+   * shipped prompt is the only place the instruction can arrive in time.
+   *
+   * <p><b>One constant for both, deliberately.</b> The instruction does not depend on what the run is
+   * scoped to — an epic's task prompt across a project, or a ticket's inside one cut workspace — and
+   * nothing in it names either. Two near-identical text blocks would be two places to fix a wording,
+   * and the fix would land in one of them; the surfaces differ in their tools, their scope and their
+   * first turn, not in how the work is divided. An identical copy is seeded by qits-projects, and a
+   * test compares the two literally, which is one more reason there is a single text here to compare
+   * against.
+   *
+   * <p>Data, not behaviour: it is the shipped default a container born without a document falls back
+   * to. An operator who clears the box gets an unsteered composed run, the same way {@link
+   * AgentSurface#PROJECT_EPICS} has always run with nothing.
+   */
+  static final String COMPOSED_RUN_PROMPT =
+      """
+      You are orchestrating this run rather than typing it. The task prompt says what to \
+      build; the order it is built in, the checking that it works and the report at the end \
+      are yours, and the bulk of the code is not.
+
+      Read the task prompt and the repository first, then plan the work as a sequence of \
+      self-contained programming tasks and hand each one to a subagent, stated completely — \
+      the files, the change, what done looks like. Planning, sequencing and the final report \
+      stay in this session. Choose each subagent's model by scope and expected difficulty: \
+      Sonnet for mechanical, narrow, well-specified edits, and Opus for anything wide, \
+      ambiguous or architecturally load-bearing.
+
+      Delegating the work does not delegate the verification. A subagent's report is a claim \
+      and not a result: build the project yourself, run the tests yourself, and read what \
+      changed before you say the work is done.\
+      """;
+
   /** Kimi session ids are opaque {@code session_}-prefixed path-safe slugs. */
   private static final String KIMI_SESSION_PATTERN = "session_[A-Za-z0-9_-]{1,128}";
 
@@ -990,10 +1035,12 @@ public final class AgentLaunchService {
 
   /**
    * The system-prompt appendix a surface <em>ships</em> with, or {@code null} for one that steers
-   * with nothing — the fallback for a container born without a configuration document. The epics
-   * desk is steered by the tools it was given and by the container it runs in,
-   * which is how this whole surface worked before there was a second desk; only the tickets desk has
-   * to say what it is, because it shares every one of those tools with the desk beside it.
+   * with nothing — the fallback for a container born without a configuration document. Three
+   * surfaces have one. The tickets desk has to say what it is, because it shares every one of its
+   * tools with the desk beside it; the two composed runs carry {@link #COMPOSED_RUN_PROMPT}, because
+   * an unattended session is the one nobody can tell mid-run to stop coding in the main loop and
+   * delegate. The epics desk and the four workspace surfaces are steered by the tools they were
+   * given and by the container they run in, which is how this worked before there was a second desk.
    */
   static String systemPromptFor(AgentSurface surface) {
     String shipped = AgentSurfaceConfigurations.shippedSystemPrompt(surface);
