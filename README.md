@@ -196,6 +196,13 @@ Versions are CalVer, stamped into every pom by the release. Each pom carries the
 deriving it, the same convention as `qits-registries-javalib`, so the stamp rewrites one line per
 pom and `deploy` at the root publishes both modules together.
 
+The reactor root also fixes `project.build.outputTimestamp`, so a build of the same commit always
+produces the same jar bytes. That matters because a retry of a half-published release must upload
+identical bytes: the store accepts a re-upload of a released version only when the bytes match, and
+without a fixed timestamp each build stamps a new one into the jar, so a retry after a failed step
+(for example, an SBOM submission failing after the jars already deployed) would fail `mvn deploy`
+with a 403 rather than a harmless no-op re-upload.
+
 ## Building
 
     ./mvnw -B -ntp verify
