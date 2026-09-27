@@ -480,7 +480,7 @@ class AgentLaunchServiceWorkspaceHostTest {
       AgentLaunchService service = service();
       AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
 
-      LaunchSpec spec = service.renderChat(AgentMcpScope.REPOSITORY, AgentSurface.PROJECT_EPICS, pinned, AgentType.CLAUDE);
+      LaunchSpec spec = service.renderChat(AgentMcpScope.REPOSITORY, AgentSurface.PROJECT_WORK, pinned, AgentType.CLAUDE);
 
       assertTrue(spec.script().contains("--input-format stream-json"));
       assertTrue(spec.script().contains("workspaceId=" + WORKSPACE));
@@ -507,7 +507,7 @@ class AgentLaunchServiceWorkspaceHostTest {
       AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
 
       LaunchSpec spec =
-          service.renderAutonomousChat(AgentMcpScope.ACTIONS, AgentSurface.PROJECT_EPICS, pinned, AgentType.CLAUDE);
+          service.renderAutonomousChat(AgentMcpScope.ACTIONS, AgentSurface.PROJECT_WORK, pinned, AgentType.CLAUDE);
 
       assertEquals(
           3,
@@ -522,7 +522,7 @@ class AgentLaunchServiceWorkspaceHostTest {
 
       LaunchSpec spec =
           service.renderInteractive(
-              AgentMcpScope.REPOSITORY, AgentSurface.PROJECT_EPICS, "do the thing", pinned, AgentType.CLAUDE);
+              AgentMcpScope.REPOSITORY, AgentSurface.PROJECT_WORK, "do the thing", pinned, AgentType.CLAUDE);
 
       assertTrue(spec.script().startsWith("exec claude 'do the thing'"), spec.script());
       assertTrue(spec.interactive());
@@ -533,7 +533,7 @@ class AgentLaunchServiceWorkspaceHostTest {
       AgentLaunchService service = service();
       AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.KIMI);
 
-      LaunchSpec spec = service.renderChat(AgentMcpScope.REPOSITORY, AgentSurface.PROJECT_EPICS, pinned, AgentType.KIMI);
+      LaunchSpec spec = service.renderChat(AgentMcpScope.REPOSITORY, AgentSurface.PROJECT_WORK, pinned, AgentType.KIMI);
 
       assertFalse(
           spec.environment().containsKey("HOME"), "Kimi reads KIMI_CODE_HOME, set container-wide");
@@ -546,7 +546,7 @@ class AgentLaunchServiceWorkspaceHostTest {
       AgentLaunchService service = service();
       AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
 
-      String script = service.renderChat(AgentMcpScope.REPOSITORY, AgentSurface.PROJECT_EPICS, pinned, AgentType.CLAUDE).script();
+      String script = service.renderChat(AgentMcpScope.REPOSITORY, AgentSurface.PROJECT_WORK, pinned, AgentType.CLAUDE).script();
 
       assertTrue(script.contains("\"SessionStart\""), "lineage is not optional");
       assertFalse(script.contains("\"UserPromptSubmit\""), "the turn-boundary hooks are");

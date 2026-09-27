@@ -311,7 +311,7 @@ class AgentLaunchServiceProjectHostTest {
     // The surface is required now — there is no shape-implied guess left to lean on — so the
     // scope-only helper names this host's default desk explicitly. It steers with nothing, which is
     // why every launch through here still renders what it rendered before the axis existed.
-    return chat(scope, AgentSurface.PROJECT_EPICS);
+    return chat(scope, AgentSurface.PROJECT_WORK);
   }
 
   private static AgentLaunchRequest chat(AgentMcpScope scope, AgentSurface surface) {
@@ -429,7 +429,7 @@ class AgentLaunchServiceProjectHostTest {
 
       String script =
           service
-              .renderChat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS, pinned, AgentType.CLAUDE)
+              .renderChat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK, pinned, AgentType.CLAUDE)
               .script();
 
       assertTrue(script.contains("--strict-mcp-config"), script);
@@ -457,7 +457,7 @@ class AgentLaunchServiceProjectHostTest {
       AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
 
       LaunchSpec spec =
-          service.renderChat(AgentMcpScope.REPOSITORY, AgentSurface.PROJECT_EPICS, pinned, AgentType.CLAUDE);
+          service.renderChat(AgentMcpScope.REPOSITORY, AgentSurface.PROJECT_WORK, pinned, AgentType.CLAUDE);
 
       assertTrue(spec.script().contains("--input-format stream-json"));
       assertTrue(spec.script().contains("repositoryId=" + REPO));
@@ -485,7 +485,7 @@ class AgentLaunchServiceProjectHostTest {
 
       LaunchSpec spec =
           service.renderAutonomousChat(
-              AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS, pinned, AgentType.CLAUDE);
+              AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK, pinned, AgentType.CLAUDE);
 
       assertEquals(
           1,
@@ -500,7 +500,7 @@ class AgentLaunchServiceProjectHostTest {
 
       LaunchSpec spec =
           service.renderInteractive(
-              AgentMcpScope.REPOSITORY, AgentSurface.PROJECT_EPICS, "do the thing", pinned, AgentType.CLAUDE);
+              AgentMcpScope.REPOSITORY, AgentSurface.PROJECT_WORK, "do the thing", pinned, AgentType.CLAUDE);
 
       assertTrue(spec.script().startsWith("exec claude 'do the thing'"), spec.script());
       assertTrue(spec.interactive());
@@ -512,7 +512,7 @@ class AgentLaunchServiceProjectHostTest {
       AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.KIMI);
 
       LaunchSpec spec =
-          service.renderChat(AgentMcpScope.REPOSITORY, AgentSurface.PROJECT_EPICS, pinned, AgentType.KIMI);
+          service.renderChat(AgentMcpScope.REPOSITORY, AgentSurface.PROJECT_WORK, pinned, AgentType.KIMI);
 
       assertFalse(
           spec.environment().containsKey("HOME"), "Kimi reads KIMI_CODE_HOME, set container-wide");
@@ -527,7 +527,7 @@ class AgentLaunchServiceProjectHostTest {
 
       String script =
           service
-              .renderChat(AgentMcpScope.REPOSITORY, AgentSurface.PROJECT_EPICS, pinned, AgentType.CLAUDE)
+              .renderChat(AgentMcpScope.REPOSITORY, AgentSurface.PROJECT_WORK, pinned, AgentType.CLAUDE)
               .script();
 
       assertTrue(script.contains("\"SessionStart\""), "lineage is not optional");
@@ -550,28 +550,24 @@ class AgentLaunchServiceProjectHostTest {
   @Nested
   class Surfaces {
 
-    /** The appendix as the shell sees it — the desk prompt's apostrophes escaped in place. */
-    private static final String QUOTED_TICKETS_PROMPT =
-        "--append-system-prompt 'You are this project'\\''s tickets front desk:";
-
     @Test
-    void theEpicsDeskAppendsNothingAtAll() {
-      // The equivalence the steering axis was added on, and re-asserted now that AgentSurface has
-      // replaced AgentDesk: project.epics renders what EPICS rendered, which is what the launch
-      // rendered before either existed.
+    void theProjectDeskAppendsNothingAtAll() {
+      // The equivalence the steering axis was added on: project.work renders what the surfaces it
+      // replaced rendered when they steered with nothing, which is what the launch rendered before
+      // any of them existed.
       AgentLaunchService service = service();
       AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
 
-      assertNull(AgentLaunchService.systemPromptFor(AgentSurface.PROJECT_EPICS));
+      assertNull(AgentLaunchService.systemPromptFor(AgentSurface.PROJECT_WORK));
       assertFalse(
           service
-              .renderChat(AgentMcpScope.REPOSITORY, AgentSurface.PROJECT_EPICS, pinned, AgentType.CLAUDE)
+              .renderChat(AgentMcpScope.REPOSITORY, AgentSurface.PROJECT_WORK, pinned, AgentType.CLAUDE)
               .script()
               .contains("--append-system-prompt"));
       assertFalse(
           service
               .renderInteractive(
-                  AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS, null, pinned, AgentType.CLAUDE)
+                  AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK, null, pinned, AgentType.CLAUDE)
               .script()
               .contains("--append-system-prompt"));
     }
@@ -601,115 +597,31 @@ class AgentLaunchServiceProjectHostTest {
     }
 
     @Test
-    void theEpicsDeskRendersTheNameItAlwaysHad() {
-      service().launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS));
+    void theProjectDeskRendersTheNameItAlwaysHad() {
+      service().launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK));
 
       assertEquals("Claude Code (project MCP)", commands.last().name(), "and it is named as before");
     }
 
     @Test
-    void aTicketsChatCarriesTheDeskPromptShellQuoted() {
-      AgentLaunchService service = service();
-      AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
-
-      String script =
-          service
-              .renderChat(AgentMcpScope.REPOSITORY, AgentSurface.PROJECT_TICKETS, pinned, AgentType.CLAUDE)
-              .script();
-
-      assertTrue(script.contains(QUOTED_TICKETS_PROMPT), script);
-      assertTrue(
-          script.contains("list_tickets and get_ticket before anything else"),
-          "the survey instruction is what makes the pre-approved reads worth having");
-      assertTrue(script.contains("point at the epics desk. Do not file an epic from here."), script);
-    }
-
-    @Test
-    void aTicketsInteractiveLaunchCarriesTheSameAppendix() {
-      // The TUI is the same desk, so the steering cannot be a chat-only affordance.
-      AgentLaunchService service = service();
-      AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
-
-      String script =
-          service
-              .renderInteractive(
-                  AgentMcpScope.REPOSITORY, AgentSurface.PROJECT_TICKETS, "triage this", pinned, AgentType.CLAUDE)
-              .script();
-
-      assertTrue(script.startsWith("exec claude 'triage this'"), script);
-      assertTrue(script.contains(QUOTED_TICKETS_PROMPT), script);
-    }
-
-    @Test
-    void aTicketsLaunchNamesItselfAfterTheDeskRatherThanTheScope() {
-      // Still the frontend's contract for one more release. The command now carries the surface as
-      // a field, but the name must not move until the string match is deleted on the other side —
-      // renaming it in the same release would move every ticket session into the epics list.
-      service().launchChat(chat(AgentMcpScope.REPOSITORY, AgentSurface.PROJECT_TICKETS));
-      assertEquals("Claude Code (tickets desk)", commands.last().name());
-
-      service().launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_TICKETS));
-      assertEquals(
-          "Claude Code (tickets desk)",
-          commands.last().name(),
-          "the scope narrows the URL; it does not name the desk");
-
-      service()
-          .launch(
-              new AgentLaunchRequest(
-                  AgentMcpScope.REPOSITORY,
-                  AgentSurface.PROJECT_TICKETS,
-                  AgentLaunchMode.INTERACTIVE,
-                  null,
-                  null,
-                  false,
-                  false,
-                  null));
-      assertEquals("Claude Code terminal (tickets desk)", commands.last().name());
-    }
-
-    @Test
-    void kimiOpensTheDeskWithoutTheAppendixBecauseItHasNowhereToPutIt() {
-      // The documented asymmetry: Kimi has no --append-system-prompt and no ACP field for one, so
-      // its tickets desk is steered by its tools and its name alone. It must still be that desk.
-      defaultType = AgentType.KIMI;
-      AgentLaunchService service = service();
-      AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.KIMI);
-
-      assertEquals(
-          "exec kimi acp",
-          service
-              .renderChat(AgentMcpScope.REPOSITORY, AgentSurface.PROJECT_TICKETS, pinned, AgentType.KIMI)
-              .script());
-
-      service().launchChat(chat(AgentMcpScope.REPOSITORY, AgentSurface.PROJECT_TICKETS));
-
-      assertEquals("Kimi Code (tickets desk)", commands.last().name());
-    }
-
-    @Test
     void theSurfaceComesBackOnTheCommand() {
-      // What lets a frontend stop matching " (tickets desk)" in a display name: the command says
-      // which surface it is, as a field, in the launch's own answer.
-      Command tickets = service().launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_TICKETS));
-      assertEquals("project.tickets", tickets.agentSurface());
-
-      Command epics = service().launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS));
-      assertEquals("project.epics", epics.agentSurface());
+      // The command says which surface it is, as a field, in the launch's own answer.
+      Command work = service().launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK));
+      assertEquals("project.work", work.agentSurface());
 
       Command terminal =
           service()
               .launch(
                   new AgentLaunchRequest(
                       AgentMcpScope.PROJECT,
-                      AgentSurface.PROJECT_TICKETS,
+                      AgentSurface.PROJECT_WORK,
                       AgentLaunchMode.INTERACTIVE,
                       null,
                       null,
                       false,
                       false,
                       null));
-      assertEquals("project.tickets", terminal.agentSurface());
+      assertEquals("project.work", terminal.agentSurface());
     }
 
     @Test
@@ -720,9 +632,10 @@ class AgentLaunchServiceProjectHostTest {
     }
 
     @Test
-    void anAutonomousRunNamesItsOwnSurfaceRatherThanBorrowingTheEpicsDesk() {
-      // A different session from a human's epics chat — read-only marked servers, a bootstrap seed,
-      // nobody watching. It borrowed AgentDesk.EPICS only because there was nothing else to name.
+    void anAutonomousRunNamesItsOwnSurfaceRatherThanBorrowingTheProjectDesk() {
+      // A different session from a human's project-desk chat — read-only marked servers, a
+      // bootstrap seed, nobody watching. It borrowed AgentDesk.EPICS only because there was nothing
+      // else to name, back when this was AgentDesk rather than AgentSurface.
       Command command = service().launchAutonomous("Composed run");
 
       assertEquals("epic.autonomous", command.agentSurface());
@@ -738,17 +651,19 @@ class AgentLaunchServiceProjectHostTest {
       assertThrows(InvalidCommandRequestException.class, () -> AgentSurface.of("project.epic"));
       assertThrows(InvalidCommandRequestException.class, () -> AgentSurface.of(""));
       assertEquals(Optional.empty(), AgentSurface.parse(null));
-      assertEquals(9, AgentSurface.KNOWN.size());
+      assertEquals(7, AgentSurface.KNOWN.size());
     }
 
     @Test
-    void theMergedFrontDeskSurfaceResolvesBesideTheTwoItReplaces() {
-      // project.work is the merged epics+tickets desk's surface, added beside project.epics and
-      // project.tickets rather than in place of either — those two retire later, once the estate has
-      // turned over onto the one front desk.
+    void theTwoRetiredSurfacesAreRefusedAndTheMergedFrontDeskResolves() {
+      // project.work is the merged epics+tickets desk's surface. project.epics and project.tickets
+      // retired once the estate turned over onto it (qits-404): both now refuse like any other
+      // unknown key rather than resolving to what they used to name.
       assertEquals(AgentSurface.PROJECT_WORK, AgentSurface.of("project.work"));
-      assertEquals(AgentSurface.PROJECT_EPICS, AgentSurface.of("project.epics"));
-      assertEquals(AgentSurface.PROJECT_TICKETS, AgentSurface.of("project.tickets"));
+      assertThrows(InvalidCommandRequestException.class, () -> AgentSurface.of("project.epics"));
+      assertThrows(InvalidCommandRequestException.class, () -> AgentSurface.of("project.tickets"));
+      assertEquals(Optional.empty(), AgentSurface.parse("project.epics"));
+      assertEquals(Optional.empty(), AgentSurface.parse("project.tickets"));
     }
 
     @Test
@@ -780,46 +695,9 @@ class AgentLaunchServiceProjectHostTest {
           InvalidCommandRequestException.class,
           () -> service().launchChat(chat(AgentMcpScope.PROJECT, null)));
       assertEquals(
-          AgentSurface.PROJECT_TICKETS,
-          chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_TICKETS).requiredSurface(),
+          AgentSurface.PROJECT_WORK,
+          chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK).requiredSurface(),
           "a named surface passes through untouched");
-    }
-
-    @Test
-    void theTwoDeskSurfacesRenderWhatTheDeskEnumRendered() {
-      // The equivalence AgentSurface replaces AgentDesk under, asserted rather than assumed: for
-      // both harnesses, in both modes, the rendered script and the command's name are what the
-      // enum's two values produced. The literals are what the desk suite asserted before the swap.
-      AgentLaunchService service = service();
-
-      assertNull(AgentLaunchService.systemPromptFor(AgentSurface.PROJECT_EPICS));
-      assertEquals(
-          AgentLaunchService.TICKETS_DESK_PROMPT,
-          AgentLaunchService.systemPromptFor(AgentSurface.PROJECT_TICKETS));
-
-      for (AgentType type : List.of(AgentType.CLAUDE, AgentType.KIMI)) {
-        // Kimi cannot pin a fresh session id, so each harness pins its own.
-        AgentLaunchService.PinnedSession session = service.pinSession(null, false, type);
-        assertFalse(
-            service
-                .renderChat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS, session, type)
-                .script()
-                .contains("--append-system-prompt"));
-        assertEquals(
-            type == AgentType.CLAUDE,
-            service
-                .renderChat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_TICKETS, session, type)
-                .script()
-                .contains(QUOTED_TICKETS_PROMPT),
-            "kimi has nowhere to put an appendix, and that asymmetry is unchanged");
-      }
-
-      service().launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS));
-      assertEquals("Claude Code (project MCP)", commands.last().name());
-      service().launchChat(chat(AgentMcpScope.REPOSITORY, AgentSurface.PROJECT_EPICS));
-      assertEquals("Claude Code (repository MCP)", commands.last().name());
-      service().launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_TICKETS));
-      assertEquals("Claude Code (tickets desk)", commands.last().name());
     }
   }
 
@@ -904,7 +782,7 @@ class AgentLaunchServiceProjectHostTest {
               .launchChat(
                   new AgentLaunchRequest(
                       AgentMcpScope.REPOSITORY,
-                      AgentSurface.PROJECT_EPICS,
+                      AgentSurface.PROJECT_WORK,
                       AgentLaunchMode.CHAT,
                       null,
                       KIMI_SESSION,
@@ -959,7 +837,7 @@ class AgentLaunchServiceProjectHostTest {
           .launchChat(
               new AgentLaunchRequest(
                   AgentMcpScope.REPOSITORY,
-                  AgentSurface.PROJECT_EPICS,
+                  AgentSurface.PROJECT_WORK,
                   AgentLaunchMode.CHAT,
                   "start here",
                   null,
@@ -976,7 +854,7 @@ class AgentLaunchServiceProjectHostTest {
           .launchChat(
               new AgentLaunchRequest(
                   AgentMcpScope.REPOSITORY,
-                  AgentSurface.PROJECT_EPICS,
+                  AgentSurface.PROJECT_WORK,
                   AgentLaunchMode.CHAT,
                   "ignored",
                   null,
@@ -996,7 +874,7 @@ class AgentLaunchServiceProjectHostTest {
           .launchChat(
               new AgentLaunchRequest(
                   AgentMcpScope.REPOSITORY,
-                  AgentSurface.PROJECT_EPICS,
+                  AgentSurface.PROJECT_WORK,
                   AgentLaunchMode.CHAT,
                   "   ",
                   null,
@@ -1039,7 +917,7 @@ class AgentLaunchServiceProjectHostTest {
                   .launch(
                       new AgentLaunchRequest(
                           AgentMcpScope.REPOSITORY,
-                          AgentSurface.PROJECT_EPICS,
+                          AgentSurface.PROJECT_WORK,
                           AgentLaunchMode.INTERACTIVE,
                           null,
                           null,
@@ -1077,7 +955,7 @@ class AgentLaunchServiceProjectHostTest {
           .launch(
               new AgentLaunchRequest(
                   AgentMcpScope.REPOSITORY,
-                  AgentSurface.PROJECT_EPICS,
+                  AgentSurface.PROJECT_WORK,
                   AgentLaunchMode.INTERACTIVE,
                   null,
                   null,
@@ -1095,7 +973,7 @@ class AgentLaunchServiceProjectHostTest {
           .launch(
               new AgentLaunchRequest(
                   AgentMcpScope.REPOSITORY,
-                  AgentSurface.PROJECT_EPICS,
+                  AgentSurface.PROJECT_WORK,
                   null,
                   null,
                   null,
@@ -1117,7 +995,7 @@ class AgentLaunchServiceProjectHostTest {
                   .launch(
                       new AgentLaunchRequest(
                           AgentMcpScope.REPOSITORY,
-                          AgentSurface.PROJECT_EPICS,
+                          AgentSurface.PROJECT_WORK,
                           AgentLaunchMode.CHAT,
                           null,
                           null,
@@ -1144,7 +1022,7 @@ class AgentLaunchServiceProjectHostTest {
           .launchChat(
               new AgentLaunchRequest(
                   AgentMcpScope.PROJECT,
-                  AgentSurface.PROJECT_EPICS,
+                  AgentSurface.PROJECT_WORK,
                   AgentLaunchMode.CHAT,
                   "what is left on the plan?",
                   null,
@@ -1162,7 +1040,7 @@ class AgentLaunchServiceProjectHostTest {
     void itIsTemplatedOverWhatTheContainerKnowsAboutItself() {
       configurations = withInitialPrompt("You are in {{repository}} on {{branch}} for {{project}}.");
 
-      service().launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS));
+      service().launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK));
 
       assertEquals(
           List.of("You are in " + REPO + " on main for qits."),
@@ -1174,7 +1052,7 @@ class AgentLaunchServiceProjectHostTest {
     void aFactNobodyCanAnswerStaysAsItWasWritten() {
       configurations = withInitialPrompt("Fix {{ticket}}.");
 
-      service().launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS));
+      service().launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK));
 
       assertEquals(List.of("Fix {{ticket}}."), commands.chatSends, "literal, not null and not gone");
     }
@@ -1190,7 +1068,7 @@ class AgentLaunchServiceProjectHostTest {
           .launch(
               new AgentLaunchRequest(
                   AgentMcpScope.PROJECT,
-                  AgentSurface.PROJECT_EPICS,
+                  AgentSurface.PROJECT_WORK,
                   AgentLaunchMode.INTERACTIVE,
                   "and then draft the epic",
                   null,
@@ -1211,7 +1089,7 @@ class AgentLaunchServiceProjectHostTest {
           .launch(
               new AgentLaunchRequest(
                   AgentMcpScope.PROJECT,
-                  AgentSurface.PROJECT_EPICS,
+                  AgentSurface.PROJECT_WORK,
                   AgentLaunchMode.INTERACTIVE,
                   "do the thing",
                   null,
@@ -1258,7 +1136,7 @@ class AgentLaunchServiceProjectHostTest {
           .launchChat(
               new AgentLaunchRequest(
                   AgentMcpScope.PROJECT,
-                  AgentSurface.PROJECT_EPICS,
+                  AgentSurface.PROJECT_WORK,
                   AgentLaunchMode.CHAT,
                   "ignored",
                   null,
@@ -1270,7 +1148,7 @@ class AgentLaunchServiceProjectHostTest {
     }
 
     private AgentSurfaceConfigurations withInitialPrompt(String prompt) {
-      return withInitialPrompt(AgentSurface.PROJECT_EPICS, prompt);
+      return withInitialPrompt(AgentSurface.PROJECT_WORK, prompt);
     }
 
     private AgentSurfaceConfigurations withInitialPrompt(AgentSurface surface, String prompt) {
@@ -1350,7 +1228,7 @@ class AgentLaunchServiceProjectHostTest {
 
       assertTrue(
           service
-              .renderChat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS, pinned, AgentType.CLAUDE)
+              .renderChat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK, pinned, AgentType.CLAUDE)
               .script()
               .contains("mcp?projectId=" + PROJECT + "\"}"),
           "project only, because that is what the attachment asks for");
@@ -1358,7 +1236,7 @@ class AgentLaunchServiceProjectHostTest {
       configurations = attaching(true, true, false);
       assertTrue(
           service
-              .renderChat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS, pinned, AgentType.CLAUDE)
+              .renderChat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK, pinned, AgentType.CLAUDE)
               .script()
               .contains("mcp?projectId=" + PROJECT + "&repositoryId=" + REPO + "\"}"),
           "and the scope no longer decides it");
@@ -1376,7 +1254,7 @@ class AgentLaunchServiceProjectHostTest {
           InvalidCommandRequestException.class,
           () ->
               service.renderChat(
-                  AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS, pinned, AgentType.CLAUDE));
+                  AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK, pinned, AgentType.CLAUDE));
     }
 
     @Test
@@ -1385,7 +1263,7 @@ class AgentLaunchServiceProjectHostTest {
       // implemented serverFor keeps rendering its scope mapping. Visible rather than silent.
       configurations = attaching(true, true, true);
 
-      Command command = service().launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS));
+      Command command = service().launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK));
 
       assertTrue(
           commands.last().script().contains("mcp?projectId=" + PROJECT + "\"}"),
@@ -1402,7 +1280,7 @@ class AgentLaunchServiceProjectHostTest {
     void aSurfaceThatConfiguresNoServersIsNotNagged() {
       // The note belongs to a launch whose document asked for a narrowing. A container with no
       // document asked for nothing and takes the host's mapping by definition.
-      Command command = service().launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS));
+      Command command = service().launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK));
 
       assertEquals(0, new JsonObject(command.agentLaunchRecord()).getJsonArray("notes").size());
     }
@@ -1411,7 +1289,7 @@ class AgentLaunchServiceProjectHostTest {
         boolean project, boolean repository, boolean workspace) {
       return new SeededConfigurationDocument()
           .surface(
-              AgentSurface.PROJECT_EPICS,
+              AgentSurface.PROJECT_WORK,
               false,
               "",
               SeededConfigurationDocument.server(
@@ -1443,7 +1321,7 @@ class AgentLaunchServiceProjectHostTest {
 
       String script =
           service
-              .renderChat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS, pinned, AgentType.CLAUDE)
+              .renderChat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK, pinned, AgentType.CLAUDE)
               .script();
 
       assertTrue(
@@ -1467,7 +1345,7 @@ class AgentLaunchServiceProjectHostTest {
       AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
       configurations =
           new SeededConfigurationDocument()
-              .surface(AgentSurface.PROJECT_EPICS, false, "")
+              .surface(AgentSurface.PROJECT_WORK, false, "")
               .attaching(
                   SeededConfigurationDocument.external(
                       "docs", "https://docs.example/mcp", "", "", List.of()))
@@ -1475,7 +1353,7 @@ class AgentLaunchServiceProjectHostTest {
 
       String script =
           service
-              .renderChat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS, pinned, AgentType.CLAUDE)
+              .renderChat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK, pinned, AgentType.CLAUDE)
               .script();
 
       assertTrue(
@@ -1493,7 +1371,7 @@ class AgentLaunchServiceProjectHostTest {
 
       AcpSessionConfig config =
           service.buildAcpSessionConfig(
-              AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS, pinned);
+              AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK, pinned);
 
       assertEquals(2, config.mcpServers().size());
       AcpSessionConfig.AcpMcpServer stripe = config.mcpServers().get(1);
@@ -1520,9 +1398,9 @@ class AgentLaunchServiceProjectHostTest {
                   2,
                   "",
                   Map.of(
-                      AgentSurface.PROJECT_EPICS.key(),
+                      AgentSurface.PROJECT_WORK.key(),
                       new AgentSurfaceConfiguration(
-                          AgentSurface.PROJECT_EPICS.key(),
+                          AgentSurface.PROJECT_WORK.key(),
                           AgentType.CLAUDE,
                           "",
                           "",
@@ -1542,10 +1420,10 @@ class AgentLaunchServiceProjectHostTest {
               InvalidCommandRequestException.class,
               () ->
                   service.renderChat(
-                      AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS, pinned, AgentType.CLAUDE));
+                      AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK, pinned, AgentType.CLAUDE));
 
       assertTrue(refused.getMessage().contains("displace it silently"), refused.getMessage());
-      assertTrue(refused.getMessage().contains("project.epics"), refused.getMessage());
+      assertTrue(refused.getMessage().contains("project.work"), refused.getMessage());
     }
 
     @Test
@@ -1555,7 +1433,7 @@ class AgentLaunchServiceProjectHostTest {
       // in one. The process is spawned with the script as rendered; what is stored is this.
       configurations = withStripe();
 
-      service().launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS));
+      service().launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK));
       AgentLaunchMetadata metadata = commands.last().agent();
 
       assertEquals(List.of(STRIPE_TOKEN), metadata.redactions());
@@ -1572,7 +1450,7 @@ class AgentLaunchServiceProjectHostTest {
     void theLaunchRecordNamesThemByKeyAndNothingElse() {
       configurations = withStripe();
 
-      Command command = service().launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS));
+      Command command = service().launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK));
       JsonObject record = new JsonObject(command.agentLaunchRecord());
 
       assertEquals(List.of("stripe"), record.getJsonArray("externalMcpServers").getList());
@@ -1584,7 +1462,7 @@ class AgentLaunchServiceProjectHostTest {
     private AgentSurfaceConfigurations withStripe() {
       return new SeededConfigurationDocument()
           .surface(
-              AgentSurface.PROJECT_EPICS,
+              AgentSurface.PROJECT_WORK,
               false,
               "",
               SeededConfigurationDocument.server(
@@ -1616,21 +1494,21 @@ class AgentLaunchServiceProjectHostTest {
       configurations =
           AgentSurfaceConfigurations.of(
               AgentConfigurationDocument.parse(
-                  "{\"version\":1,\"surfaces\":[{\"surface\":\"project.epics\",\"harness\":\"CLAUDE\","
+                  "{\"version\":1,\"surfaces\":[{\"surface\":\"project.work\",\"harness\":\"CLAUDE\","
                       + "\"permissionMode\":\"PROMPT\",\"model\":\"opus\",\"effort\":\"xhigh\","
                       + "\"remoteControl\":true,\"activityTracking\":false}]}",
                   "test"));
 
-      Command command = service().launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS));
+      Command command = service().launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK));
       JsonObject record = new JsonObject(command.agentLaunchRecord());
 
-      assertEquals("project.epics", record.getString("surface"));
+      assertEquals("project.work", record.getString("surface"));
       assertEquals("CLAUDE", record.getString("harness"));
       assertEquals("opus", record.getString("model"));
       assertEquals("xhigh", record.getString("effort"));
       assertEquals("PROMPT", record.getString("permissionMode"));
       assertTrue(record.getBoolean("remoteControl"));
-      assertEquals("qits project.epics main", record.getString("remoteControlName"));
+      assertEquals("qits project.work main", record.getString("remoteControlName"));
       assertFalse(record.getBoolean("activityTracking"));
       assertTrue(record.getBoolean("configured"), "this container was born with a document");
       assertEquals(
@@ -1643,7 +1521,7 @@ class AgentLaunchServiceProjectHostTest {
     void aContainerWithNoDocumentSaysItWasNotConfigured() {
       // The difference between "configured this way" and "nobody had configured it", which a reader
       // of the record cannot otherwise tell — and which is exactly the rollout's own question.
-      Command command = service().launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS));
+      Command command = service().launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK));
 
       assertFalse(new JsonObject(command.agentLaunchRecord()).getBoolean("configured"));
     }
@@ -1668,13 +1546,13 @@ class AgentLaunchServiceProjectHostTest {
       configurations =
           AgentSurfaceConfigurations.of(
               AgentConfigurationDocument.parse(
-                  "{\"version\":1,\"surfaces\":[{\"surface\":\"project.tickets\",\"harness\":\"KIMI\","
+                  "{\"version\":1,\"surfaces\":[{\"surface\":\"project.work\",\"harness\":\"KIMI\","
                       + "\"permissionMode\":\"SKIP_PERMISSIONS\",\"effort\":\"high\","
                       + "\"systemPrompt\":\"You are the desk.\"}]}",
                   "test"));
 
       Command command =
-          service().launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_TICKETS));
+          service().launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK));
       JsonObject record = new JsonObject(command.agentLaunchRecord());
 
       assertEquals("", record.getString("effort"), "nothing was rendered, so nothing is recorded");
@@ -1690,7 +1568,7 @@ class AgentLaunchServiceProjectHostTest {
               .launch(
                   new AgentLaunchRequest(
                       AgentMcpScope.PROJECT,
-                      AgentSurface.PROJECT_TICKETS,
+                      AgentSurface.PROJECT_WORK,
                       AgentLaunchMode.INTERACTIVE,
                       null,
                       null,
@@ -1699,7 +1577,7 @@ class AgentLaunchServiceProjectHostTest {
                       null));
 
       assertEquals(
-          "project.tickets", new JsonObject(command.agentLaunchRecord()).getString("surface"));
+          "project.work", new JsonObject(command.agentLaunchRecord()).getString("surface"));
     }
 
     @Test
@@ -1713,7 +1591,7 @@ class AgentLaunchServiceProjectHostTest {
     void noCredentialCanTravelInIt() {
       // Attached external servers are recorded BY KEY. Not by url with a header stripped, not by a
       // redacted value — by key, so there is no shape here a credential could ride in.
-      Command command = service().launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS));
+      Command command = service().launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK));
 
       assertFalse(command.agentLaunchRecord().contains("header"), command.agentLaunchRecord());
       assertFalse(command.agentLaunchRecord().contains("Authorization"));
@@ -1730,7 +1608,7 @@ class AgentLaunchServiceProjectHostTest {
       AgentLaunchService service = service();
       AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.KIMI);
 
-      AcpSessionConfig config = service.buildAcpSessionConfig(AgentMcpScope.REPOSITORY, AgentSurface.PROJECT_EPICS, pinned);
+      AcpSessionConfig config = service.buildAcpSessionConfig(AgentMcpScope.REPOSITORY, AgentSurface.PROJECT_WORK, pinned);
 
       assertEquals("/workspace", config.cwd());
       assertEquals(1, config.mcpServers().size());
@@ -1751,12 +1629,12 @@ class AgentLaunchServiceProjectHostTest {
           KIMI_SESSION,
           service
               .buildAcpSessionConfig(
-                  AgentMcpScope.REPOSITORY, AgentSurface.PROJECT_EPICS, service.pinSession(KIMI_SESSION, false, AgentType.KIMI))
+                  AgentMcpScope.REPOSITORY, AgentSurface.PROJECT_WORK, service.pinSession(KIMI_SESSION, false, AgentType.KIMI))
               .resumeSessionId());
       assertNull(
           service
               .buildAcpSessionConfig(
-                  AgentMcpScope.REPOSITORY, AgentSurface.PROJECT_EPICS, service.pinSession(null, false, AgentType.KIMI))
+                  AgentMcpScope.REPOSITORY, AgentSurface.PROJECT_WORK, service.pinSession(null, false, AgentType.KIMI))
               .resumeSessionId());
     }
 
@@ -1766,7 +1644,7 @@ class AgentLaunchServiceProjectHostTest {
       AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.KIMI);
 
       AcpSessionConfig config =
-          service.buildAcpSessionConfig(AgentMcpScope.REPOSITORY, AgentSurface.PROJECT_EPICS, pinned, true);
+          service.buildAcpSessionConfig(AgentMcpScope.REPOSITORY, AgentSurface.PROJECT_WORK, pinned, true);
 
       assertTrue(config.mcpServers().get(0).url().contains("agentReadOnly=true"));
     }
@@ -1783,25 +1661,14 @@ class AgentLaunchServiceProjectHostTest {
   @Nested
   class ConfiguredRendering {
 
-    /** This host's three surfaces, seeded from its own serversFor and its own tool list. */
+    /** This host's two surfaces, seeded from its own serversFor and its own tool list. */
     private AgentSurfaceConfigurations seeded() {
       return new SeededConfigurationDocument()
           // PROJECT scope: ?projectId=<id>, no narrowing beyond it.
           .surface(
-              AgentSurface.PROJECT_EPICS,
+              AgentSurface.PROJECT_WORK,
               true,
               "",
-              SeededConfigurationDocument.server(
-                  "repository",
-                  true,
-                  false,
-                  false,
-                  false,
-                  ProjectHostMcpServers.READ_ONLY_REPOSITORY_TOOLS))
-          .surface(
-              AgentSurface.PROJECT_TICKETS,
-              true,
-              AgentLaunchService.TICKETS_DESK_PROMPT,
               SeededConfigurationDocument.server(
                   "repository",
                   true,
@@ -1827,8 +1694,7 @@ class AgentLaunchServiceProjectHostTest {
     @Test
     void everySurfaceRendersWhatTheConstantsRendered() {
       AgentLaunchService service = service();
-      List<AgentSurface> surfaces =
-          List.of(AgentSurface.PROJECT_EPICS, AgentSurface.PROJECT_TICKETS);
+      List<AgentSurface> surfaces = List.of(AgentSurface.PROJECT_WORK);
 
       for (AgentSurface surface : surfaces) {
         for (AgentType type : List.of(AgentType.CLAUDE, AgentType.KIMI)) {
@@ -1884,7 +1750,7 @@ class AgentLaunchServiceProjectHostTest {
     }
 
     @Test
-    void theTicketsPromptComesFromTheDocumentRatherThanTheSwitch() {
+    void theProjectDeskPromptComesFromTheDocumentRatherThanTheSwitch() {
       // The switch over the desk is gone: an edited prompt renders, and the constant is what a
       // container born without a document falls back to.
       AgentLaunchService service = service();
@@ -1892,35 +1758,32 @@ class AgentLaunchServiceProjectHostTest {
 
       configurations =
           new SeededConfigurationDocument()
-              .surface(AgentSurface.PROJECT_TICKETS, true, "Answer only in haiku.")
+              .surface(AgentSurface.PROJECT_WORK, true, "Answer only in haiku.")
               .configurations();
 
       String script =
           service
-              .renderChat(
-                  AgentMcpScope.PROJECT, AgentSurface.PROJECT_TICKETS, pinned, AgentType.CLAUDE)
+              .renderChat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK, pinned, AgentType.CLAUDE)
               .script();
 
       assertTrue(script.contains("--append-system-prompt 'Answer only in haiku.'"), script);
-      assertFalse(script.contains("tickets front desk"), "the constant is the fallback, not the law");
     }
 
     @Test
     void anEmptySystemPromptIsAValueAndNotAnAbsence() {
-      // project.epics is seeded with "" on purpose. If empty rendered as "the shipped default"
+      // project.work is seeded with "" on purpose. If empty rendered as "the shipped default"
       // instead, an operator could never clear a prompt.
       AgentLaunchService service = service();
       AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
 
       configurations =
           new SeededConfigurationDocument()
-              .surface(AgentSurface.PROJECT_TICKETS, true, "")
+              .surface(AgentSurface.PROJECT_WORK, true, "")
               .configurations();
 
       assertFalse(
           service
-              .renderChat(
-                  AgentMcpScope.PROJECT, AgentSurface.PROJECT_TICKETS, pinned, AgentType.CLAUDE)
+              .renderChat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK, pinned, AgentType.CLAUDE)
               .script()
               .contains("--append-system-prompt"));
     }
@@ -1934,7 +1797,7 @@ class AgentLaunchServiceProjectHostTest {
       assertTrue(
           service
               .renderChat(
-                  AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS, pinned, AgentType.CLAUDE)
+                  AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK, pinned, AgentType.CLAUDE)
               .script()
               .contains("--dangerously-skip-permissions"),
           "seeded as what every launch renders today");
@@ -1942,14 +1805,14 @@ class AgentLaunchServiceProjectHostTest {
       configurations =
           AgentSurfaceConfigurations.of(
               AgentConfigurationDocument.parse(
-                  "{\"version\":1,\"surfaces\":[{\"surface\":\"project.epics\","
+                  "{\"version\":1,\"surfaces\":[{\"surface\":\"project.work\","
                       + "\"harness\":\"CLAUDE\",\"permissionMode\":\"PROMPT\"}]}",
                   "test"));
 
       assertFalse(
           service
               .renderChat(
-                  AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS, pinned, AgentType.CLAUDE)
+                  AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK, pinned, AgentType.CLAUDE)
               .script()
               .contains("--dangerously-skip-permissions"),
           "the agent will start asking, which is the point of the knob");
@@ -1966,7 +1829,7 @@ class AgentLaunchServiceProjectHostTest {
       assertFalse(
           service
               .renderChat(
-                  AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS, pinned, AgentType.CLAUDE)
+                  AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK, pinned, AgentType.CLAUDE)
               .script()
               .contains("\"Stop\""));
 
@@ -1975,7 +1838,7 @@ class AgentLaunchServiceProjectHostTest {
       assertTrue(
           service
               .renderChat(
-                  AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS, pinned, AgentType.CLAUDE)
+                  AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK, pinned, AgentType.CLAUDE)
               .script()
               .contains("\"Stop\""));
     }
@@ -1991,12 +1854,12 @@ class AgentLaunchServiceProjectHostTest {
 
       String chat =
           service
-              .renderChat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS, pinned, AgentType.CLAUDE)
+              .renderChat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK, pinned, AgentType.CLAUDE)
               .script();
       String interactive =
           service
               .renderInteractive(
-                  AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS, null, pinned, AgentType.CLAUDE)
+                  AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK, null, pinned, AgentType.CLAUDE)
               .script();
 
       assertTrue(chat.contains("--model 'haiku'"), chat);
@@ -2014,15 +1877,15 @@ class AgentLaunchServiceProjectHostTest {
       assertTrue(
           service
               .renderInteractive(
-                  AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS, null, pinned, AgentType.CLAUDE)
+                  AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK, null, pinned, AgentType.CLAUDE)
               .script()
-              .contains("--remote-control 'qits project.epics main'"));
+              .contains("--remote-control 'qits project.work main'"));
 
       configurations = knobs("\"remoteControl\":false");
       assertFalse(
           service
               .renderInteractive(
-                  AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS, null, pinned, AgentType.CLAUDE)
+                  AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK, null, pinned, AgentType.CLAUDE)
               .script()
               .contains("--remote-control"),
           "the knob is what drives it, and it is off");
@@ -2037,7 +1900,7 @@ class AgentLaunchServiceProjectHostTest {
 
       assertFalse(
           service
-              .renderChat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS, pinned, AgentType.CLAUDE)
+              .renderChat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK, pinned, AgentType.CLAUDE)
               .script()
               .contains("--remote-control"),
           "the flag parses under --print and is dropped on the headless branch");
@@ -2049,14 +1912,14 @@ class AgentLaunchServiceProjectHostTest {
       // harness for a bridge over stdin when the session announces itself. It used to be
       // unconditional and named after the branch; it is now the surface's knob.
       configurations = knobs("\"remoteControl\":true");
-      service().launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS));
+      service().launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK));
       assertEquals(
-          "qits project.epics main",
+          "qits project.work main",
           remoteControlNameAskedFor(commands.last().protocolFactory()),
           "named by surface and branch, not by the container's hostname");
 
       configurations = knobs("\"remoteControl\":false");
-      service().launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS));
+      service().launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK));
       assertNull(
           remoteControlNameAskedFor(commands.last().protocolFactory()),
           "nothing is asked for, so no bridge is raised");
@@ -2075,7 +1938,7 @@ class AgentLaunchServiceProjectHostTest {
       String script =
           service
               .renderInteractive(
-                  AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS, null, pinned, AgentType.KIMI)
+                  AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK, null, pinned, AgentType.KIMI)
               .script();
 
       assertTrue(script.contains("-m 'k2'"), script);
@@ -2094,9 +1957,9 @@ class AgentLaunchServiceProjectHostTest {
       for (LaunchSpec spec :
           List.of(
               service.renderChat(
-                  AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS, pinned, AgentType.CLAUDE),
+                  AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK, pinned, AgentType.CLAUDE),
               service.renderInteractive(
-                  AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS, null, pinned, AgentType.CLAUDE),
+                  AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK, null, pinned, AgentType.CLAUDE),
               service.renderLogin(AgentType.CLAUDE))) {
         assertEquals(List.of(), AgentRemoteControl.disabledBy(spec.environment()), spec.script());
       }
@@ -2106,7 +1969,7 @@ class AgentLaunchServiceProjectHostTest {
     private AgentSurfaceConfigurations knobs(String extraFields) {
       return AgentSurfaceConfigurations.of(
           AgentConfigurationDocument.parse(
-              "{\"version\":1,\"surfaces\":[{\"surface\":\"project.epics\",\"harness\":\"CLAUDE\","
+              "{\"version\":1,\"surfaces\":[{\"surface\":\"project.work\",\"harness\":\"CLAUDE\","
                   + "\"permissionMode\":\"SKIP_PERMISSIONS\","
                   + extraFields
                   + "}]}",
@@ -2158,7 +2021,7 @@ class AgentLaunchServiceProjectHostTest {
       configurations =
           new SeededConfigurationDocument()
               .surface(
-                  AgentSurface.PROJECT_EPICS,
+                  AgentSurface.PROJECT_WORK,
                   true,
                   "",
                   SeededConfigurationDocument.server(
@@ -2170,10 +2033,10 @@ class AgentLaunchServiceProjectHostTest {
               InvalidCommandRequestException.class,
               () ->
                   service.renderChat(
-                      AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS, pinned, AgentType.CLAUDE));
+                      AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK, pinned, AgentType.CLAUDE));
 
       assertTrue(refusal.getMessage().contains("observability"), refusal.getMessage());
-      assertTrue(refusal.getMessage().contains("project.epics"), refusal.getMessage());
+      assertTrue(refusal.getMessage().contains("project.work"), refusal.getMessage());
     }
 
     @Test
@@ -2185,13 +2048,13 @@ class AgentLaunchServiceProjectHostTest {
 
       configurations =
           new SeededConfigurationDocument()
-              .surface(AgentSurface.PROJECT_EPICS, true, "")
+              .surface(AgentSurface.PROJECT_WORK, true, "")
               .configurations();
 
       String script =
           service
               .renderChat(
-                  AgentMcpScope.PROJECT, AgentSurface.PROJECT_EPICS, pinned, AgentType.CLAUDE)
+                  AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK, pinned, AgentType.CLAUDE)
               .script();
 
       assertFalse(script.contains("\"repository\":"), script);

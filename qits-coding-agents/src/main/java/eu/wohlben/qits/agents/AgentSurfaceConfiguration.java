@@ -13,7 +13,7 @@ import java.util.List;
  * document and must render exactly what it rendered then.
  *
  * <p>{@code model}, {@code effort}, {@code systemPrompt} and {@code initialPrompt} are never null:
- * empty is a first-class value. {@link AgentSurface#PROJECT_EPICS} steers with an empty system
+ * empty is a first-class value. {@link AgentSurface#PROJECT_WORK} steers with an empty system
  * prompt <em>on purpose</em>, and an empty model is the harness's own default.
  *
  * @param surface the surface key this configures. A key outside {@link AgentSurface#KNOWN} is kept

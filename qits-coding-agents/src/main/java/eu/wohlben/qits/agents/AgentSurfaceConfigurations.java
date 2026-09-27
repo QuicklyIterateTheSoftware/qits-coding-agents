@@ -27,10 +27,12 @@ import java.util.Optional;
  *       is the value a container with no document has always used;
  *   <li>the <b>harness</b> is the host's default for the same reason;
  *   <li>the <b>system prompt</b> is the one thing the library genuinely ships: {@link
- *       AgentLaunchService#TICKETS_DESK_PROMPT} for {@link AgentSurface#PROJECT_TICKETS}, {@link
  *       AgentLaunchService#COMPOSED_RUN_PROMPT} for the two composed runs ({@link
  *       AgentSurface#EPIC_AUTONOMOUS} and {@link AgentSurface#TICKET_DISPATCH}), and nothing for the
- *       other five. It was a text block in a {@code switch} arm a release ago and it still is; the
+ *       other five. {@link AgentLaunchService#TICKETS_DESK_PROMPT} shipped this way for {@code
+ *       project.tickets} before that key retired (qits-404); {@link AgentSurface#PROJECT_WORK}, the
+ *       surface that replaced it, ships an empty prompt like the other five and this task left that
+ *       as is. It was a text block in a {@code switch} arm a release ago and it still is; the
  *       document makes it editable, it does not make it move.
  * </ul>
  *
@@ -101,25 +103,19 @@ public final class AgentSurfaceConfigurations {
   }
 
   /**
-   * The system-prompt appendix a surface ships with. Three surfaces have one and the other five
-   * steer with nothing:
-   *
-   * <ul>
-   *   <li>the <b>tickets desk</b> has to say what it is, because it shares every tool with the desk
-   *       beside it;
-   *   <li>the <b>two composed runs</b> carry {@link AgentLaunchService#COMPOSED_RUN_PROMPT}, which
-   *       tells an unattended main loop to orchestrate and delegate rather than type the code
-   *       itself — the one instruction nobody is present to give them mid-run.
-   * </ul>
+   * The system-prompt appendix a surface ships with. Two surfaces have one and the other five steer
+   * with nothing: the <b>two composed runs</b> carry {@link AgentLaunchService#COMPOSED_RUN_PROMPT},
+   * which tells an unattended main loop to orchestrate and delegate rather than type the code itself
+   * — the one instruction nobody is present to give them mid-run. {@code project.tickets} used to be
+   * a third, because the tickets desk had to say what it was while it shared every tool with the
+   * desk beside it; that key retired (qits-404), and {@link AgentSurface#PROJECT_WORK}, the surface
+   * that replaced it, ships an empty prompt like the rest.
    *
    * <p>The text blocks themselves stay where they have always been, in {@link AgentLaunchService}:
    * this stops them being the <em>only</em> copy, not the last one. Nothing downstream may depend on
    * a prompt being here — an operator who clears the box gets an unsteered run.
    */
   public static String shippedSystemPrompt(AgentSurface surface) {
-    if (AgentSurface.PROJECT_TICKETS.equals(surface)) {
-      return AgentLaunchService.TICKETS_DESK_PROMPT;
-    }
     if (AgentSurface.EPIC_AUTONOMOUS.equals(surface)
         || AgentSurface.TICKET_DISPATCH.equals(surface)) {
       return AgentLaunchService.COMPOSED_RUN_PROMPT;

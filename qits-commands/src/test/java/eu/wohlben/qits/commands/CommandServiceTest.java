@@ -106,7 +106,7 @@ class CommandServiceTest {
                 null,
                 null,
                 new AgentLaunchMetadata(
-                    "CLAUDE", "project.epics", "{}", List.of("Bearer sk-live-secret")));
+                    "CLAUDE", "project.work", "{}", List.of("Bearer sk-live-secret")));
     waitForFinish(h, command.id());
 
     assertFalse(
@@ -119,7 +119,7 @@ class CommandServiceTest {
         "Bearer sk-live-secret",
         Files.readString(proof),
         "while the process ran with the script as it was rendered");
-    assertEquals("project.epics", command.agentSurface());
+    assertEquals("project.work", command.agentSurface());
     assertEquals("{}", command.agentLaunchRecord());
   }
 
@@ -137,7 +137,7 @@ class CommandServiceTest {
                 null,
                 null,
                 null,
-                AgentLaunchMetadata.of("CLAUDE", "project.epics"));
+                AgentLaunchMetadata.of("CLAUDE", "project.work"));
     waitForFinish(h, command.id());
 
     assertEquals("echo hello", command.executeScript());

@@ -412,32 +412,32 @@ class AgentConfigurationDocumentTest {
           AgentSurfaceConfigurations.of(
               AgentConfigurationDocument.parse(document(SEEDED_EPIC_CHAT), "test"));
 
-      AgentSurfaceConfiguration tickets =
-          configurations.resolve(AgentSurface.PROJECT_TICKETS, AgentType.CLAUDE, true);
+      AgentSurfaceConfiguration autonomous =
+          configurations.resolve(AgentSurface.EPIC_AUTONOMOUS, AgentType.CLAUDE, true);
 
-      assertTrue(tickets.shipped());
-      assertEquals(AgentLaunchService.TICKETS_DESK_PROMPT, tickets.systemPrompt());
-      assertNull(tickets.mcpServers(), "shipped means: whatever this host attaches for the scope");
+      assertTrue(autonomous.shipped());
+      assertEquals(AgentLaunchService.COMPOSED_RUN_PROMPT, autonomous.systemPrompt());
+      assertNull(
+          autonomous.mcpServers(), "shipped means: whatever this host attaches for the scope");
     }
 
     @Test
     void theTwoComposedRunsShipTheOrchestrationPromptAndNobodyElseMoves() {
-      // Three surfaces carry steering and five carry none. The composed runs are the two nobody
+      // Two surfaces carry steering and five carry none. The composed runs are the two nobody
       // talks to turn by turn, so "orchestrate and delegate" has to arrive in the shipped prompt or
-      // it never arrives at all; the other six render exactly what they rendered before.
+      // it never arrives at all; the other five render exactly what they rendered before.
+      // project.tickets used to be a third, shipping AgentLaunchService.TICKETS_DESK_PROMPT; that
+      // key retired (qits-404), and project.work, the surface that replaced it, is one of the five.
       assertEquals(
           AgentLaunchService.COMPOSED_RUN_PROMPT,
           AgentSurfaceConfigurations.shippedSystemPrompt(AgentSurface.EPIC_AUTONOMOUS));
       assertEquals(
           AgentLaunchService.COMPOSED_RUN_PROMPT,
           AgentSurfaceConfigurations.shippedSystemPrompt(AgentSurface.TICKET_DISPATCH));
-      assertEquals(
-          AgentLaunchService.TICKETS_DESK_PROMPT,
-          AgentSurfaceConfigurations.shippedSystemPrompt(AgentSurface.PROJECT_TICKETS));
 
       for (AgentSurface surface :
           List.of(
-              AgentSurface.PROJECT_EPICS,
+              AgentSurface.PROJECT_WORK,
               AgentSurface.EPIC_CHAT,
               AgentSurface.EPIC_AGENT,
               AgentSurface.WORKSPACE_CHAT,

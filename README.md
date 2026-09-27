@@ -63,11 +63,10 @@ asserted byte for byte **here**, where the harness now lives.
 ## What a session runs as
 
 A session is keyed by its **surface** — where in the product it was started from (`AgentSurface`:
-`project.epics`, `project.tickets`, `project.work`, `epic.chat`, `epic.agent`, `workspace.chat`,
-`workspace.agent`, `epic.autonomous`, `ticket.dispatch`). `project.work` is the merged epics+tickets
-front desk's surface, added beside `project.epics` and `project.tickets` rather than in place of
-either — those two retire later, once the estate has turned over onto the one front desk. The
-vocabulary is open: adding another is a constant and a shipped default beside it, not a migration.
+`project.work`, `epic.chat`, `epic.agent`, `workspace.chat`, `workspace.agent`, `epic.autonomous`,
+`ticket.dispatch`). `project.work` is the merged epics+tickets front desk's surface; it replaced
+`project.epics` and `project.tickets`, which retired once the estate turned over onto it (qits-404).
+The vocabulary is open: adding another is a constant and a shipped default beside it, not a migration.
 An unknown surface is refused like an unknown scope; a
 *missing* one resolves to what the request's shape implies, and that guess is a dated migration
 crutch rather than a contract.

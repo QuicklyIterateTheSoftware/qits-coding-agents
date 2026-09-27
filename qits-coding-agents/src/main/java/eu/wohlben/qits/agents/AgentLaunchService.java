@@ -86,16 +86,19 @@ public final class AgentLaunchService {
           + " what it describes.";
 
   /**
-   * The steering a {@link AgentSurface#PROJECT_TICKETS} launch carries, appended to the harness's
-   * own system prompt. It names the desk, the tools it works through, and the two things a triage session gets
-   * wrong without being told: that a ticket's description has to say how to <em>see</em> the
-   * problem, and that resolving is reversible, so nothing about a ticket needs guarding as if it
-   * were final.
+   * The steering the {@code project.tickets} launch used to carry, appended to the harness's own
+   * system prompt, before that surface retired (qits-404): it named the desk, the tools it worked
+   * through, and the two things a triage session got wrong without being told — that a ticket's
+   * description has to say how to <em>see</em> the problem, and that resolving is reversible, so
+   * nothing about a ticket needs guarding as if it were final.
    *
-   * <p>The last line is the boundary between the two desks. A tickets session that meets something
-   * plan-shaped must hand it back rather than file an epic from here: an epic is drafted against the
-   * project's plan, by a session steered at the plan, and one written as a side effect of triage
-   * lands with none of that context.
+   * <p>The last line was the boundary between the two desks: a tickets session that met something
+   * plan-shaped had to hand it back rather than file an epic from there.
+   *
+   * <p>{@link AgentSurface#PROJECT_WORK}, the merged front desk that replaced {@code project.epics}
+   * and {@code project.tickets}, ships an empty prompt like every other surface but the two composed
+   * runs — retiring the two old keys did not move this text onto it. The constant stays only because
+   * a unit test still compares against it byte for byte.
    *
    * <p>A Java text block rather than a classpath resource, because this module is framework-free and
    * has no resources directory — deliberately, see {@link ClaudeCodeAgent}'s class javadoc: a prompt
@@ -146,7 +149,7 @@ public final class AgentLaunchService {
    *
    * <p>Data, not behaviour: it is the shipped default a container born without a document falls back
    * to. An operator who clears the box gets an unsteered composed run, the same way {@link
-   * AgentSurface#PROJECT_EPICS} has always run with nothing.
+   * AgentSurface#PROJECT_WORK} has always run with nothing.
    */
   static final String COMPOSED_RUN_PROMPT =
       """
@@ -1021,7 +1024,7 @@ public final class AgentLaunchService {
   /**
    * Appends the surface configuration's steering to the agent's system prompt, if it has any. An
    * <em>empty</em> appendix is a first-class value and not an absence: {@link
-   * AgentSurface#PROJECT_EPICS} steers with nothing on purpose, which is the reason a steering axis
+   * AgentSurface#PROJECT_WORK} steers with nothing on purpose, which is the reason a steering axis
    * could be added without touching a single running launch.
    *
    * <p>This is where the {@code switch} over the desk went. The prompt is now whatever the surface's
@@ -1221,19 +1224,12 @@ public final class AgentLaunchService {
    * carried no surface field of its own, and renaming the label here would silently have moved every
    * ticket session into the epics list. That agreement is gone — a command reports {@code
    * agentSurface} and the frontend sorts by it (task 46e32cb3 deleted the match) — so <b>nothing
-   * parses this name any more and it is free to change</b>. The text below is kept only because
-   * there is no reason to rename what people already recognise, not because anything depends on it.
-   *
-   * <p>Every other surface keeps the scope-derived names it has always had, so nothing that was
-   * running gets renamed. The surface wins over the scope where they would both speak: a tickets
-   * session says which desk it is, not how its one MCP URL was narrowed, because the narrowing is not
-   * what a reader of the session list is telling sessions apart by.
+   * parses this name any more and it is free to change</b>. The {@code " (tickets desk)"} branch
+   * this method special-cased for {@code project.tickets} is gone with the key itself (qits-404):
+   * every surface now renders the plain scope-derived name below.
    */
   private static String harnessName(
       AgentMcpScope scope, AgentSurface surface, String harnessLabel) {
-    if (AgentSurface.PROJECT_TICKETS.equals(surface)) {
-      return harnessLabel + " (tickets desk)";
-    }
     return switch (scope) {
       case ACTIONS -> harnessLabel + " (actions + repository MCP)";
       case REPOSITORY -> harnessLabel + " (repository MCP)";
