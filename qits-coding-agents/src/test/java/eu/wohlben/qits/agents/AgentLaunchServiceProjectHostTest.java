@@ -738,7 +738,17 @@ class AgentLaunchServiceProjectHostTest {
       assertThrows(InvalidCommandRequestException.class, () -> AgentSurface.of("project.epic"));
       assertThrows(InvalidCommandRequestException.class, () -> AgentSurface.of(""));
       assertEquals(Optional.empty(), AgentSurface.parse(null));
-      assertEquals(8, AgentSurface.KNOWN.size());
+      assertEquals(9, AgentSurface.KNOWN.size());
+    }
+
+    @Test
+    void theMergedFrontDeskSurfaceResolvesBesideTheTwoItReplaces() {
+      // project.work is the merged epics+tickets desk's surface, added beside project.epics and
+      // project.tickets rather than in place of either — those two retire later, once the estate has
+      // turned over onto the one front desk.
+      assertEquals(AgentSurface.PROJECT_WORK, AgentSurface.of("project.work"));
+      assertEquals(AgentSurface.PROJECT_EPICS, AgentSurface.of("project.epics"));
+      assertEquals(AgentSurface.PROJECT_TICKETS, AgentSurface.of("project.tickets"));
     }
 
     @Test

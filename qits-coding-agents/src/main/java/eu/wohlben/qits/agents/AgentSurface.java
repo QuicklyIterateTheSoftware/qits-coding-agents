@@ -12,13 +12,16 @@ import java.util.Optional;
  * there was nowhere to put a prompt. {@code EPICS} is {@link #PROJECT_EPICS} and {@code TICKETS} is
  * {@link #PROJECT_TICKETS}, and both render byte for byte what the enum rendered.
  *
- * <p>The eight the platform has today:
+ * <p>The nine the platform has today:
  *
  * <ul>
  *   <li>{@link #PROJECT_EPICS} — the refinement agent on a project's epics overview. The projects
  *       daemon's {@code PROJECT}-scoped chat, steered by nothing at all.
  *   <li>{@link #PROJECT_TICKETS} — the triage agent on a project's tickets overview. It carries a
  *       system prompt, as the two composed runs below now do.
+ *   <li>{@link #PROJECT_WORK} — the merged epics+tickets desk's surface, at {@code :project/work}.
+ *       Added beside {@link #PROJECT_EPICS} and {@link #PROJECT_TICKETS}, which retire once the
+ *       estate has turned over onto the one front desk.
  *   <li>{@link #EPIC_CHAT} / {@link #EPIC_AGENT} — the refining route's chat and agent tabs.
  *   <li>{@link #WORKSPACE_CHAT} / {@link #WORKSPACE_AGENT} — the workspace detail route's chat and
  *       agents tabs.
@@ -54,6 +57,13 @@ public record AgentSurface(String key) {
   /** The triage agent on a project's tickets overview. Projects daemon, {@code PROJECT} scope. */
   public static final AgentSurface PROJECT_TICKETS = new AgentSurface("project.tickets");
 
+  /**
+   * The one front desk's surface — the merged epics+tickets desk at {@code :project/work}. Added
+   * beside {@link #PROJECT_EPICS} and {@link #PROJECT_TICKETS}, which retire later once the estate
+   * has turned over onto this one.
+   */
+  public static final AgentSurface PROJECT_WORK = new AgentSurface("project.work");
+
   /** The refining route's chat tab. Workspace daemon, {@code REPOSITORY} scope. */
   public static final AgentSurface EPIC_CHAT = new AgentSurface("epic.chat");
 
@@ -73,8 +83,8 @@ public record AgentSurface(String key) {
   public static final AgentSurface TICKET_DISPATCH = new AgentSurface("ticket.dispatch");
 
   /**
-   * The vocabulary, in the order the editor lists it: the two project desks, the four a human opens
-   * in a workspace container, then the two composed runs.
+   * The vocabulary, in the order the editor lists it: the two project desks, the one merged front
+   * desk, the four a human opens in a workspace container, then the two composed runs.
    *
    * <p>The same order and the same keys as {@code AgentSurfaceDefaults.SURFACES} in
    * qits-projects-service. The two lists are copies rather than a shared type — that service depends
@@ -86,6 +96,7 @@ public record AgentSurface(String key) {
       List.of(
           PROJECT_EPICS,
           PROJECT_TICKETS,
+          PROJECT_WORK,
           EPIC_CHAT,
           EPIC_AGENT,
           WORKSPACE_CHAT,
