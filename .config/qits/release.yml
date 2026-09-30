@@ -2,12 +2,13 @@
 # two coordinates it publishes.
 #
 # The epic that created this repository asked for `ci-event-release-request.yml` and
-# `ci-event-release.yml` modelled on qits-integrations-quarkus-javalib. That is superseded: the
-# wrapper now carries `.config/qits/release-archetypes/maven-library.yml`, qits-ci compiles it into
-# both pipelines at evaluation time, and this reactor is exactly the case it was written for — a
-# multi-module javalib with no deployable. Spelling the triggers, the tag fetch, the detached
-# checkout, the `$QITS_VERSION` guard, the `altDeploymentRepository` and the SBOM PUT here again
-# would be ~150 lines of platform process copied into a repository that knows none of it.
+# `ci-event-release.yml` modelled on qits-integrations-quarkus-javalib. That is superseded: qits-ci
+# now ships `.config/qits/release-archetypes/maven-library.yml` (in qits-ci-service, or a
+# repository's own copy at that path), compiling it into both pipelines at evaluation time, and this
+# reactor is exactly the case it was written for — a multi-module javalib with no deployable.
+# Spelling the triggers, the tag fetch, the detached checkout, the `$QITS_VERSION` guard, the
+# `altDeploymentRepository` and the SBOM PUT here again would be ~150 lines of platform process
+# copied into a repository that knows none of it.
 #
 # WHAT IS LEFT IS WHAT ONLY THIS REPOSITORY KNOWS: that it publishes two jars, and where each one's
 # CycloneDX document lands. The release step runs `makeBom` at the reactor root with no `-pl`, so
