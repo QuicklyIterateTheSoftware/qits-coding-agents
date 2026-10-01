@@ -93,6 +93,11 @@ class AgentLaunchServiceProjectHostTest {
   /** Whether that entity was BLOCKED when this container booted. */
   private boolean entityBlocked;
 
+  /** That entity's title and status when this container booted, or empty. */
+  private Optional<String> entityTitle;
+
+  private Optional<String> entityStatus;
+
   @BeforeEach
   void setUp() {
     commands = new Commands();
@@ -103,6 +108,8 @@ class AgentLaunchServiceProjectHostTest {
     ambientFacts = Map.of("project", "qits", "repository", REPO);
     entityId = Optional.empty();
     entityBlocked = false;
+    entityTitle = Optional.empty();
+    entityStatus = Optional.empty();
   }
 
   // --- fakes ------------------------------------------------------------------------------------
@@ -217,8 +224,26 @@ class AgentLaunchServiceProjectHostTest {
 
     @Override
     public boolean sendKeystrokes(String commandId, String text) {
+      if (endedTerminals.contains(commandId)) {
+        return false;
+      }
       keystrokes.add(text);
+      keystrokesTo.add(commandId + " " + text);
       return true;
+    }
+
+    /** Terminals whose person left an unsent draft in the input line. */
+    private final java.util.Set<String> drafts = new java.util.HashSet<>();
+
+    /** Terminals that have ended: a keystroke write to one answers false. */
+    private final java.util.Set<String> endedTerminals = new java.util.HashSet<>();
+
+    /** Every keystroke write that landed, as {@code "<commandId> <text>"}. */
+    private final List<String> keystrokesTo = new ArrayList<>();
+
+    @Override
+    public boolean hasDraft(String commandId) {
+      return drafts.contains(commandId);
     }
 
     @Override
@@ -359,6 +384,16 @@ class AgentLaunchServiceProjectHostTest {
           @Override
           public boolean entityBlocked() {
             return entityBlocked;
+          }
+
+          @Override
+          public Optional<String> entityTitle() {
+            return entityTitle;
+          }
+
+          @Override
+          public Optional<String> entityStatus() {
+            return entityStatus;
           }
         };
     CommandStore store = new CommandStore();
@@ -1583,7 +1618,10 @@ class AgentLaunchServiceProjectHostTest {
       assertEquals("xhigh", record.getString("effort"));
       assertEquals("PROMPT", record.getString("permissionMode"));
       assertTrue(record.getBoolean("remoteControl"));
-      assertEquals("qits project.work main", record.getString("remoteControlName"));
+      assertEquals(
+          AgentRemoteControl.FRONT_DESK_NAME,
+          record.getString("remoteControlName"),
+          "the desk runs for no entity, and is called what a person recognises it as");
       assertFalse(record.getBoolean("activityTracking"));
       assertTrue(record.getBoolean("configured"), "this container was born with a document");
       assertEquals(
@@ -1592,11 +1630,23 @@ class AgentLaunchServiceProjectHostTest {
       assertEquals(0, record.getJsonArray("externalMcpServers").size());
     }
 
-    @Test
-    void theRemoteControlNameLeadsWithTheEntityIdWhenTheContainerKnowsOne() {
-      // A container created for a ticket answers entityId(), and the recorded name is the id a person
-      // already uses for this work everywhere else, not the surface key.
+    /** The name a ticket container renders for qits-614 while it is IMPLEMENTED. */
+    private static final String IMPLEMENTED_NAME = "\uD83D\uDFE6 qits-614 Session names";
+
+    private static final String BLOCKED_IMPLEMENTED_NAME =
+        "\u2757\uD83D\uDFE6 qits-614 Session names";
+
+    private void forTicket() {
       entityId = Optional.of("qits-614");
+      entityTitle = Optional.of("Session names");
+      entityStatus = Optional.of("IMPLEMENTED");
+    }
+
+    @Test
+    void theRemoteControlNameReadsSquareIdAndTitleWhenTheContainerKnowsItsEntity() {
+      // A container created for a ticket answers entityId(), title and status, and the recorded
+      // name is the board's reading of it, not the surface key and not the branch.
+      forTicket();
       configurations =
           AgentSurfaceConfigurations.of(
               AgentConfigurationDocument.parse(
@@ -1607,54 +1657,83 @@ class AgentLaunchServiceProjectHostTest {
       Command command = service().launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK));
       JsonObject record = new JsonObject(command.agentLaunchRecord());
 
-      assertEquals("qits-614: main", record.getString("remoteControlName"));
+      assertEquals(IMPLEMENTED_NAME, record.getString("remoteControlName"));
+    }
+
+    @Test
+    void aContainerThatKnowsOnlyItsIdIsNamedByTheIdAlone() {
+      // A container created before the host injected title and status still names its entity.
+      entityId = Optional.of("qits-614");
+      configurations = remoteControlOn();
+
+      Command command = service().launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK));
+
+      assertEquals(
+          "qits-614", new JsonObject(command.agentLaunchRecord()).getString("remoteControlName"));
     }
 
     @Test
     void aLaunchWhileTheEntityIsBlockedRecordsTheMarkedName() {
       // The container booted for a ticket that was already blocked: the very first launch carries
-      // the marker, with nobody having called setBlocked.
-      entityId = Optional.of("qits-614");
+      // the marker, with nobody having called setEntity.
+      forTicket();
       entityBlocked = true;
       configurations = remoteControlOn();
 
       Command command = service().launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK));
       JsonObject record = new JsonObject(command.agentLaunchRecord());
 
-      assertEquals("\u2757 qits-614: main", record.getString("remoteControlName"));
+      assertEquals(BLOCKED_IMPLEMENTED_NAME, record.getString("remoteControlName"));
     }
 
     @Test
-    void setBlockedRenamesALiveRemoteControlChatAndForgetsAnEndedOne() {
-      entityId = Optional.of("qits-614");
+    void setEntityRenamesALiveRemoteControlChatAndForgetsAnEndedOne() {
+      forTicket();
       configurations = remoteControlOn();
       commands.spawnTransports = true;
       AgentLaunchService service = service();
       Command command = service.launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK));
       assertEquals(
-          "qits-614: main", new JsonObject(command.agentLaunchRecord()).getString("remoteControlName"));
+          IMPLEMENTED_NAME,
+          new JsonObject(command.agentLaunchRecord()).getString("remoteControlName"));
 
-      assertEquals(1, service.setBlocked(true));
-      assertEquals(List.of(command.id() + " \u2757 qits-614: main"), commands.renames);
+      assertEquals(1, service.setEntity(new EntityFacts("Session names, renamed", "VERIFIED", false)));
       assertEquals(
-          "\u2757 qits-614: main",
+          List.of(command.id() + " \uD83D\uDFE8 qits-614 Session names, renamed"), commands.renames);
+      assertEquals(
+          "\uD83D\uDFE8 qits-614 Session names, renamed",
           new JsonObject(
                   service.launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK))
                       .agentLaunchRecord())
               .getString("remoteControlName"),
-          "the next launch renders the flag too");
+          "the next launch renders the new facts too");
 
       commands.liveChats.clear();
       commands.renames.clear();
-      assertEquals(0, service.setBlocked(false), "both chats have ended; neither answers");
+      assertEquals(0, service.setEntity(EntityFacts.NONE), "both chats have ended; neither answers");
       commands.liveChats.add(command.id());
-      assertEquals(0, service.setBlocked(true), "and an ended chat was forgotten, not retried");
+      assertEquals(
+          0, service.setEntity(EntityFacts.NONE), "and an ended chat was forgotten, not retried");
       assertTrue(commands.renames.isEmpty());
     }
 
     @Test
-    void setBlockedLeavesAChatWithRemoteControlOffAlone() {
-      entityId = Optional.of("qits-614");
+    void setBlockedChangesOnlyTheBlockedFlag() {
+      forTicket();
+      configurations = remoteControlOn();
+      commands.spawnTransports = true;
+      AgentLaunchService service = service();
+      Command command = service.launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK));
+
+      assertEquals(1, service.setBlocked(true));
+      assertEquals(List.of(command.id() + " " + BLOCKED_IMPLEMENTED_NAME), commands.renames);
+      assertEquals(new EntityFacts("Session names", "IMPLEMENTED", true), service.entity());
+      assertTrue(service.blocked());
+    }
+
+    @Test
+    void setEntityLeavesAChatWithRemoteControlOffAlone() {
+      forTicket();
       configurations =
           AgentSurfaceConfigurations.of(
               AgentConfigurationDocument.parse(
@@ -1667,8 +1746,199 @@ class AgentLaunchServiceProjectHostTest {
       Command command = service.launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK));
       commands.liveChats.add(command.id());
 
-      assertEquals(0, service.setBlocked(true), "no bridge, no list entry to rename");
+      assertEquals(
+          0, service.setEntity(new EntityFacts("x", "DONE", true)), "no bridge, nothing to rename");
       assertTrue(commands.renames.isEmpty());
+    }
+
+    // --- live rename of interactive sessions (qits-617) ---
+
+    private static final String VERIFIED_NAME = "\uD83D\uDFE8 qits-614 Session names";
+
+    private static final EntityFacts VERIFIED = new EntityFacts("Session names", "VERIFIED", false);
+
+    private Command interactiveSession(AgentLaunchService service) {
+      Command command =
+          service.launch(
+              new AgentLaunchRequest(
+                  AgentMcpScope.REPOSITORY,
+                  AgentSurface.PROJECT_WORK,
+                  AgentLaunchMode.INTERACTIVE,
+                  null,
+                  null,
+                  false,
+                  false,
+                  null));
+      assertTrue(
+          commands.last().script().contains("--remote-control '" + IMPLEMENTED_NAME + "'"),
+          commands.last().script());
+      return command;
+    }
+
+    private String renameOf(Command command, String name) {
+      return command.id() + " /rename " + name;
+    }
+
+    @Test
+    void anInteractiveRenameWaitsForTheNextIdleAndIsTypedThen() {
+      forTicket();
+      configurations = remoteControlOn();
+      AgentLaunchService service = service();
+      Command command = interactiveSession(service);
+      service.onActivity(command.id(), "BUSY");
+
+      assertEquals(1, service.setEntity(VERIFIED), "queued counts: it will carry the name");
+      assertTrue(commands.keystrokesTo.isEmpty(), "nothing is typed into a running turn");
+
+      service.onActivity(command.id(), "IDLE");
+      assertEquals(List.of(renameOf(command, VERIFIED_NAME)), commands.keystrokesTo);
+
+      service.onActivity(command.id(), "IDLE");
+      assertEquals(1, commands.keystrokesTo.size(), "delivered once, not on every idle");
+    }
+
+    @Test
+    void anIdleSessionIsRenamedAtOnce() {
+      forTicket();
+      configurations = remoteControlOn();
+      AgentLaunchService service = service();
+      Command command = interactiveSession(service);
+      service.onActivity(command.id(), "idle");
+
+      assertEquals(1, service.setEntity(VERIFIED));
+      assertEquals(List.of(renameOf(command, VERIFIED_NAME)), commands.keystrokesTo);
+    }
+
+    @Test
+    void anInteractiveRenameNeverTypesIntoAPermissionPrompt() {
+      forTicket();
+      configurations = remoteControlOn();
+      AgentLaunchService service = service();
+      Command command = interactiveSession(service);
+      service.onActivity(command.id(), "WAITING");
+
+      service.setEntity(VERIFIED);
+      assertTrue(commands.keystrokesTo.isEmpty(), "the first keystroke would answer the dialog");
+
+      service.onActivity(command.id(), "BUSY");
+      service.onActivity(command.id(), "IDLE");
+      assertEquals(List.of(renameOf(command, VERIFIED_NAME)), commands.keystrokesTo);
+    }
+
+    @Test
+    void anInteractiveSessionWithNoHookStateIsNeverRenamedLive() {
+      // Activity tracking off: no hook ever fires, so nothing is known about the screen.
+      forTicket();
+      configurations = remoteControlOn();
+      AgentLaunchService service = service();
+      interactiveSession(service);
+
+      assertEquals(1, service.setEntity(VERIFIED));
+      assertEquals(1, service.setEntity(new EntityFacts("Session names", "DONE", true)));
+      assertTrue(commands.keystrokesTo.isEmpty());
+    }
+
+    @Test
+    void aDraftHoldsTheRenameUntilAnIdleWithACleanLine() {
+      forTicket();
+      configurations = remoteControlOn();
+      AgentLaunchService service = service();
+      Command command = interactiveSession(service);
+      service.onActivity(command.id(), "IDLE");
+      commands.drafts.add(command.id());
+
+      service.setEntity(VERIFIED);
+      service.onActivity(command.id(), "IDLE");
+      assertTrue(commands.keystrokesTo.isEmpty(), "never glued onto a half-typed prompt");
+
+      // The person submits: the draft clears, but nothing is sent until that turn's Stop.
+      commands.drafts.clear();
+      assertTrue(commands.keystrokesTo.isEmpty());
+      service.onActivity(command.id(), "BUSY");
+      assertTrue(commands.keystrokesTo.isEmpty());
+      service.onActivity(command.id(), "IDLE");
+      assertEquals(List.of(renameOf(command, VERIFIED_NAME)), commands.keystrokesTo);
+    }
+
+    @Test
+    void onlyTheLatestNameIsTypedAndAnUnchangedOneIsNot() {
+      forTicket();
+      configurations = remoteControlOn();
+      AgentLaunchService service = service();
+      Command command = interactiveSession(service);
+      service.onActivity(command.id(), "BUSY");
+
+      service.setEntity(VERIFIED);
+      service.setEntity(new EntityFacts("Session names", "DONE", true));
+      service.onActivity(command.id(), "IDLE");
+      assertEquals(
+          List.of(renameOf(command, "\u2757\uD83D\uDFE9 qits-614 Session names")),
+          commands.keystrokesTo,
+          "two changes during one turn type one rename");
+
+      commands.keystrokesTo.clear();
+      service.onActivity(command.id(), "BUSY");
+      service.setEntity(VERIFIED);
+      service.setEntity(new EntityFacts("Session names", "DONE", true));
+      service.onActivity(command.id(), "IDLE");
+      assertTrue(
+          commands.keystrokesTo.isEmpty(), "back to what it already carries: nothing to type");
+    }
+
+    @Test
+    void anEndedInteractiveSessionIsForgotten() {
+      forTicket();
+      configurations = remoteControlOn();
+      AgentLaunchService service = service();
+      Command command = interactiveSession(service);
+      service.onActivity(command.id(), "ENDED");
+
+      assertEquals(0, service.setEntity(VERIFIED));
+      service.onActivity(command.id(), "IDLE");
+      assertTrue(commands.keystrokesTo.isEmpty(), "an ENDED session is not brought back by a hook");
+    }
+
+    @Test
+    void anInteractiveSessionWhoseTerminalIsGoneIsForgotten() {
+      forTicket();
+      configurations = remoteControlOn();
+      AgentLaunchService service = service();
+      Command command = interactiveSession(service);
+      service.onActivity(command.id(), "IDLE");
+      commands.endedTerminals.add(command.id());
+
+      assertEquals(0, service.setEntity(VERIFIED));
+      commands.endedTerminals.clear();
+      assertEquals(0, service.setEntity(new EntityFacts("x", "DONE", false)), "not retried");
+      assertTrue(commands.keystrokesTo.isEmpty());
+    }
+
+    @Test
+    void anInteractiveSessionWithRemoteControlOffIsNotTracked() {
+      forTicket();
+      configurations =
+          AgentSurfaceConfigurations.of(
+              AgentConfigurationDocument.parse(
+                  "{\"version\":1,\"surfaces\":[{\"surface\":\"project.work\","
+                      + "\"harness\":\"CLAUDE\",\"permissionMode\":\"PROMPT\","
+                      + "\"remoteControl\":false}]}",
+                  "test"));
+      AgentLaunchService service = service();
+      Command command =
+          service.launch(
+              new AgentLaunchRequest(
+                  AgentMcpScope.REPOSITORY,
+                  AgentSurface.PROJECT_WORK,
+                  AgentLaunchMode.INTERACTIVE,
+                  null,
+                  null,
+                  false,
+                  false,
+                  null));
+      service.onActivity(command.id(), "IDLE");
+
+      assertEquals(0, service.setEntity(VERIFIED), "no bridge, no list entry to rename");
+      assertTrue(commands.keystrokesTo.isEmpty());
     }
 
     private AgentSurfaceConfigurations remoteControlOn() {
@@ -2031,7 +2301,7 @@ class AgentLaunchServiceProjectHostTest {
     }
 
     @Test
-    void anInteractiveLaunchTakesTheRemoteControlFlagNamedAfterTheSurfaceAndTheBranch() {
+    void anInteractiveLaunchTakesTheRemoteControlFlagNamedForTheDesk() {
       AgentLaunchService service = service();
       AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
 
@@ -2041,7 +2311,7 @@ class AgentLaunchServiceProjectHostTest {
               .renderInteractive(
                   AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK, null, pinned, AgentType.CLAUDE)
               .script()
-              .contains("--remote-control 'qits project.work main'"));
+              .contains("--remote-control '" + AgentRemoteControl.FRONT_DESK_NAME + "'"));
 
       configurations = knobs("\"remoteControl\":false");
       assertFalse(
@@ -2076,9 +2346,9 @@ class AgentLaunchServiceProjectHostTest {
       configurations = knobs("\"remoteControl\":true");
       service().launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK));
       assertEquals(
-          "qits project.work main",
+          AgentRemoteControl.FRONT_DESK_NAME,
           remoteControlNameAskedFor(commands.last().protocolFactory()),
-          "named by surface and branch, not by the container's hostname");
+          "the desk is named as a person knows it, not by the container's hostname");
 
       configurations = knobs("\"remoteControl\":false");
       service().launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK));

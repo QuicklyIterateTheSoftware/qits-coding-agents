@@ -5,6 +5,7 @@ import eu.wohlben.qits.commands.AgentSessionRef;
 import eu.wohlben.qits.commands.ChatProtocolFactory;
 import eu.wohlben.qits.commands.Command;
 import eu.wohlben.qits.commands.CommandExitListener;
+import eu.wohlben.qits.commands.GuardedInput;
 import java.util.Map;
 import java.util.Optional;
 
@@ -77,6 +78,28 @@ public interface AgentCommands {
    * a second opening turn, not a reason to buffer one; see {@code AgentLaunchService.openingTurns}.
    */
   boolean sendKeystrokes(String commandId, String text);
+
+  /**
+   * Whether the person left something typed but unsent in an interactive session's input line — see
+   * {@code CommandRegistry.personInput}. A default answering {@code false}, for a test double that
+   * predates it.
+   */
+  default boolean hasDraft(String commandId) {
+    return false;
+  }
+
+  /**
+   * {@link #sendKeystrokes}, held back while the person {@link #hasDraft has a draft}: the one way a
+   * server-side keystroke may be typed into a session somebody might be typing into. The production
+   * adapter checks and writes under the session's stdin lock; this default checks first and writes
+   * after, which is the same answer for a double that has no person typing.
+   */
+  default GuardedInput sendKeystrokesUnlessDraft(String commandId, String text) {
+    if (hasDraft(commandId)) {
+      return GuardedInput.HELD_FOR_DRAFT;
+    }
+    return sendKeystrokes(commandId, text) ? GuardedInput.WRITTEN : GuardedInput.NOT_RUNNING;
+  }
 
   /** Records a hook-reported session identity on a command. */
   void reportAgentSession(String commandId, String sessionId, String transcriptPath);

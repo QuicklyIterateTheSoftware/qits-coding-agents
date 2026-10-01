@@ -109,11 +109,12 @@ public interface AgentDefaults {
   }
 
   /**
-   * Whether the entity {@link #entityId()} names was BLOCKED when this container booted — the seed
-   * for {@code AgentLaunchService}'s blocked flag, which {@code setBlocked} moves from then on.
+   * Whether the entity {@link #entityId()} names was BLOCKED when this container booted — part of the
+   * seed for {@code AgentLaunchService}'s {@link EntityFacts}, which {@code setEntity} (or its thin
+   * {@code setBlocked}) moves from then on.
    *
    * <p>Only the initial value: blocking is a state that changes while the container lives, so a host
-   * that learns of a change calls {@code AgentLaunchService.setBlocked} rather than answering
+   * that learns of a change calls {@code AgentLaunchService.setEntity} rather than answering
    * differently here. Seeding matters anyway, because a daemon that restarts inside a container
    * created for an already-blocked ticket would otherwise launch its next session without the
    * marker until somebody blocked the ticket again. A default answering {@code false}, for the same
@@ -121,5 +122,33 @@ public interface AgentDefaults {
    */
   default boolean entityBlocked() {
     return false;
+  }
+
+  /**
+   * The title of the entity {@link #entityId()} names, as it read when this container booted — the
+   * third part of a session name ({@code 🟦 qits-555 <title>}); empty when unknown, and a name then
+   * carries the id alone. The workspace daemon reads it from {@code
+   * QITS_WORKSPACE_DAEMON_ENTITY_TITLE}.
+   *
+   * <p>Raw, as the host stores it: {@link AgentRemoteControl#sanitisedTitle} makes it safe to type
+   * into a terminal, so a host passes what it has. Only the seed, like {@link #entityBlocked()}: an
+   * edit while the container lives arrives through {@code AgentLaunchService.setEntity}. A default
+   * answering {@link Optional#empty()}, for the released-artifact reason.
+   */
+  default Optional<String> entityTitle() {
+    return Optional.empty();
+  }
+
+  /**
+   * The status word of the entity {@link #entityId()} names when this container booted — {@code
+   * REPORTED}, {@code REFINED}, {@code IMPLEMENTED}, {@code VERIFIED}, {@code DONE} or {@code
+   * DROPPED} — which picks the session name's square ({@link EntityStatusSquare}); empty when
+   * unknown, and the name then carries no square. The workspace daemon reads it from {@code
+   * QITS_WORKSPACE_DAEMON_ENTITY_STATUS}. Only the seed; a transition arrives through {@code
+   * AgentLaunchService.setEntity}. A default answering {@link Optional#empty()}, for the
+   * released-artifact reason.
+   */
+  default Optional<String> entityStatus() {
+    return Optional.empty();
   }
 }

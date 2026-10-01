@@ -289,6 +289,44 @@ public final class CommandRegistry {
     return true;
   }
 
+  /**
+   * {@link #input}, for bytes the <em>person</em> typed into the attached browser terminal — the
+   * door a host's terminal socket calls, and the only one that moves {@link #hasDraft}. Everything
+   * the server writes on its own account goes through {@link #input}, so that the draft flag says
+   * what the person left in the input line and nothing else. False when the command is not a running
+   * terminal session.
+   */
+  public boolean personInput(String commandId, byte[] data) {
+    CommandSession session = sessions.get(commandId);
+    if (session == null) {
+      return false;
+    }
+    session.personInput(data);
+    return true;
+  }
+
+  /**
+   * Whether the person left something typed but unsent in a running terminal's input line, as far
+   * as {@link #personInput} could tell — see {@code CommandSession.personInput} for the rule. False
+   * for a command that is not a running terminal session.
+   */
+  public boolean hasDraft(String commandId) {
+    CommandSession session = sessions.get(commandId);
+    return session != null && session.hasDraft();
+  }
+
+  /**
+   * Writes server keystrokes to a running terminal only if the person has no draft in its input
+   * line, checking and writing under the session's stdin lock so no person frame interleaves.
+   */
+  public GuardedInput inputUnlessDraft(String commandId, byte[] data) {
+    CommandSession session = sessions.get(commandId);
+    if (session == null) {
+      return GuardedInput.NOT_RUNNING;
+    }
+    return session.inputUnlessDraft(data) ? GuardedInput.WRITTEN : GuardedInput.HELD_FOR_DRAFT;
+  }
+
   public boolean resize(String commandId, int cols, int rows) {
     CommandSession session = sessions.get(commandId);
     if (session == null) {
