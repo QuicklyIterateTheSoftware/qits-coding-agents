@@ -186,28 +186,56 @@ public final class AgentLaunchService {
   private final String taskPromptBootstrap;
 
   /**
-   * Whether the entity this container works on is BLOCKED, which puts {@link
-   * AgentRemoteControl#BLOCKED_MARKER} in front of every session name rendered from now on. Seeded
-   * from {@link AgentDefaults#entityBlocked()} and moved by {@link #setBlocked}.
+   * What this container knows about the entity it works on — title, status, blocked — which every
+   * session name rendered from now on is built from ({@link AgentRemoteControl#sessionName(String,
+   * EntityFacts, String, String)}). Seeded from {@link AgentDefaults} and moved by {@link
+   * #setEntity}; one volatile value, so a name is never rendered from half of an update.
    */
-  private volatile boolean blocked;
+  private volatile EntityFacts entity;
 
   /**
-   * The live Claude stream-json chats this service launched with Remote Control on, by command id, holding the surface key each was named for —
-   * the sessions {@link #setBlocked} can rename in place. Pruned lazily: an entry whose rename
-   * answers false has ended, and is dropped then.
+   * The live Claude stream-json chats this service launched with Remote Control on, by command id,
+   * holding the surface key each was named for — the chats {@link #setEntity} can rename in place.
+   * Pruned lazily: an entry whose rename answers false has ended, and is dropped then.
    */
   private final ConcurrentMap<String, String> renameableChats = new ConcurrentHashMap<>();
 
   /**
    * Chats whose named transport has been created but whose launch has not returned yet, by command
-   * id, holding the blocked flag the name was rendered with. Two steps rather than one because the
-   * transport is created inside the spawn, before the commands layer has registered the chat: a
-   * {@link #setBlocked} that found it in {@link #renameableChats} then would get false from the
-   * rename and forget a session that is just starting. {@link #trackRenameable} promotes the entry
-   * once the chat is registered.
+   * id, holding the name the transport was given. Two steps rather than one because the transport is
+   * created inside the spawn, before the commands layer has registered the chat: a {@link
+   * #setEntity} that found it in {@link #renameableChats} then would get false from the rename and
+   * forget a session that is just starting. {@link #trackRenameable} promotes the entry once the chat
+   * is registered.
    */
-  private final ConcurrentMap<String, Boolean> namedAtSpawn = new ConcurrentHashMap<>();
+  private final ConcurrentMap<String, String> namedAtSpawn = new ConcurrentHashMap<>();
+
+  /**
+   * The live interactive Claude sessions this service launched with {@code --remote-control}, by
+   * command id — the sessions {@link #setEntity} renames by typing {@code /rename} into their PTY,
+   * once {@link #onActivity} says it is safe to. Entered before the spawn, so a hook that fires
+   * before the launch returns already has somewhere to land; dropped when the session ends (its exit
+   * listener, an {@code ENDED} activity, or a keystroke write that finds no terminal).
+   */
+  private final ConcurrentMap<String, InteractiveName> renameableInteractive =
+      new ConcurrentHashMap<>();
+
+  /**
+   * One interactive session's naming state, guarded by its own monitor: the surface it was named
+   * for, the name it carries now, the name it should carry once it is safe to type (null when it
+   * already does), and the activity state its hooks last reported (null before the first).
+   */
+  private static final class InteractiveName {
+    private final String surfaceKey;
+    private String carried;
+    private String pending;
+    private String state;
+
+    private InteractiveName(String surfaceKey, String carried) {
+      this.surfaceKey = surfaceKey;
+      this.carried = carried;
+    }
+  }
 
   /**
    * @param claudeMount where the shared credential volume mounts. Agent launches point {@code HOME}
@@ -268,32 +296,58 @@ public final class AgentLaunchService {
     this.taskPromptBootstrap =
         taskPromptBootstrap == null ? TASK_PROMPT_BOOTSTRAP : taskPromptBootstrap;
     // Null-tolerant like the rest of this constructor: a test that exercises one rendering seam
-    // passes no defaults at all, and an absent seed is an unblocked one.
-    this.blocked = defaults != null && defaults.entityBlocked();
+    // passes no defaults at all, and an absent seed is nothing known.
+    this.entity = EntityFacts.of(defaults);
   }
 
   /**
-   * Marks the entity this container works on as blocked or unblocked, and renames the sessions that
-   * can be renamed in place to match; answers how many were.
+   * Records what the entity this container works on is now — title, status, blocked — and renames
+   * the sessions that can be renamed in place to match; answers how many sessions will carry the new
+   * name: the live chats renamed now, plus the live interactive sessions that were renamed now, are
+   * queued to be renamed at their next idle moment, or already carried it.
    *
-   * <p>The flag is stored first, so every launch from here on renders the new name whatever happens
+   * <p>The facts are stored first, so every launch from here on renders the new name whatever happens
    * below. Then every live Claude chat this service started with Remote Control on is renamed over
    * its own stdin ({@code /rename}, answered locally by the harness, no model call — see {@code
-   * StreamJsonChatProtocol.rename}); a chat whose rename answers false has ended and is forgotten.
+   * StreamJsonChatProtocol.rename}); a chat whose rename answers false has ended and is forgotten. A
+   * Kimi chat has no Remote Control and so no list entry to rename.
    *
-   * <p>Two kinds of session are deliberately left alone and pick the marker up at their next launch.
-   * A Kimi chat has no Remote Control and so no list entry to rename. An interactive session has a
-   * name but no channel to rename it on except keystrokes into its PTY, and keystrokes land wherever
-   * the cursor is — in the middle of a prompt the person is half-way through typing, or inside a
-   * dialog — which is worse than a stale marker.
+   * <p><b>Interactive sessions are renamed too, but only when nobody can be hurt by it.</b> qits-614
+   * left them alone: an interactive session has no channel but keystrokes into its PTY, and
+   * keystrokes land wherever the cursor is — in the middle of a prompt the person is half-way through
+   * typing, inside a permission dialog, or into a turn the harness is busy with — which is worse than
+   * a stale name. The owner has since verified that {@code /rename <name>} typed into an idle
+   * interactive {@code --remote-control} session renames it live, so the remaining problem is the
+   * moment, and this answers it by never choosing one. The new name is <em>queued</em> on the
+   * session, and typed — {@code /rename <name>} and Enter, through {@link
+   * AgentCommands#sendKeystrokesUnlessDraft} — only while both hold:
    *
-   * <p>Not synchronised against itself: two calls racing each other each rename with the flag they
-   * stored, and the last write to a session's stdin wins, which is also the flag left standing
-   * unless the two interleave exactly between store and rename. A host calls this from one event
-   * consumer, where that cannot happen.
+   * <ul>
+   *   <li><b>the TUI is idle</b>: the last activity {@link #onActivity} heard for it is {@code IDLE}
+   *       — SessionStart or Stop came last. {@code BUSY} (a turn is running, and typed text would
+   *       queue behind it or into it), {@code WAITING} (a permission prompt is open, and the first
+   *       keystroke would answer it) and no state at all (nothing is known about the screen) all
+   *       defer;
+   *   <li><b>the input line is empty</b>: the person's browser terminal left no unsent draft ({@code
+   *       CommandRegistry.personInput}), so the command is not glued onto their half-typed prompt
+   *       and submitted with it. A draft defers; submitting it does not deliver anything by itself,
+   *       because a submit is a turn and the next safe moment is that turn's Stop.
+   * </ul>
+   *
+   * <p>A deferred name is retried on every {@code IDLE} the hooks report, and only the latest is
+   * kept: two changes while a turn runs type one rename, not two. A name that would not change what
+   * the session carries clears the queue rather than typing a no-op. With activity tracking off for
+   * a surface there are no hooks, so there is never an {@code IDLE} and an interactive session there
+   * is <b>never renamed live</b>: it takes the new name at its next launch. That is the deliberate
+   * cost of refusing to guess the state of a screen.
+   *
+   * <p>Not synchronised against itself: two calls racing each other each rename with the facts they
+   * stored, and the last write to a session wins, which is also the facts left standing unless the
+   * two interleave exactly between store and rename. A host calls this from one event consumer,
+   * where that cannot happen.
    */
-  public int setBlocked(boolean blocked) {
-    this.blocked = blocked;
+  public int setEntity(EntityFacts facts) {
+    this.entity = facts == null ? EntityFacts.NONE : facts;
     int renamed = 0;
     for (Map.Entry<String, String> chat : renameableChats.entrySet()) {
       if (commands.chatRename(chat.getKey(), sessionName(chat.getValue()))) {
@@ -302,12 +356,110 @@ public final class AgentLaunchService {
         renameableChats.remove(chat.getKey(), chat.getValue());
       }
     }
+    for (Map.Entry<String, InteractiveName> session : renameableInteractive.entrySet()) {
+      if (retarget(session.getKey(), session.getValue())) {
+        renamed++;
+      }
+    }
     return renamed;
+  }
+
+  /**
+   * {@link #setEntity} with only the blocked flag changed — the title and status stay what they
+   * were. Kept for a daemon's {@code agents/blocked} door, which a host older than the {@code
+   * agents/entity} relay still calls; answers what {@link #setEntity} answers. Reads then writes the
+   * facts, so it shares {@link #setEntity}'s single-consumer assumption.
+   */
+  public int setBlocked(boolean blocked) {
+    return setEntity(entity.withBlocked(blocked));
   }
 
   /** Whether launches currently render the blocked marker. */
   public boolean blocked() {
-    return blocked;
+    return entity.blocked();
+  }
+
+  /** The entity facts launches currently render their names from. */
+  public EntityFacts entity() {
+    return entity;
+  }
+
+  /**
+   * What a host's hook webhook heard about an agent command's turn state — the listener that makes
+   * interactive renames possible (see {@link #setEntity}). The host calls it for every state it
+   * <em>stores</em>, with the vocabulary its hook mapping produces: {@code IDLE} (SessionStart,
+   * Stop), {@code BUSY} (UserPromptSubmit), {@code WAITING} (Notification — a permission prompt) and
+   * {@code ENDED} (SessionEnd). Stored, not received: a Stop the webhook drops because a permission
+   * prompt is pending must not arrive here as {@code IDLE}, or a rename would be typed into the
+   * dialog.
+   *
+   * <p>{@code IDLE} retries a queued rename; {@code ENDED} forgets the session. Case-insensitive; any
+   * other word is stored and, not being {@code IDLE}, defers. A command this service is not tracking
+   * — a chat, an interactive session with Remote Control off, a Kimi session, anything already ended
+   * — is ignored, so a host may forward every hook without filtering.
+   */
+  public void onActivity(String commandId, String state) {
+    if (commandId == null || state == null) {
+      return;
+    }
+    InteractiveName session = renameableInteractive.get(commandId);
+    if (session == null) {
+      return;
+    }
+    String word = state.trim().toUpperCase(java.util.Locale.ROOT);
+    if (ENDED.equals(word)) {
+      renameableInteractive.remove(commandId, session);
+      return;
+    }
+    synchronized (session) {
+      session.state = word;
+    }
+    deliver(commandId, session);
+  }
+
+  /** The activity state that makes a queued interactive rename safe to type. */
+  private static final String IDLE = "IDLE";
+
+  /** The activity state that ends an interactive session's tracking. */
+  private static final String ENDED = "ENDED";
+
+  /**
+   * Queues the name the current facts render for an interactive session, or clears the queue when it
+   * already carries it, then tries to deliver; false when the session turned out to have ended.
+   */
+  private boolean retarget(String commandId, InteractiveName session) {
+    String name = sessionName(session.surfaceKey);
+    synchronized (session) {
+      session.pending = name.equals(session.carried) ? null : name;
+    }
+    return deliver(commandId, session);
+  }
+
+  /**
+   * Types a queued name into an interactive session if it is idle and the person has no draft —
+   * see {@link #setEntity} for why both. False only when the terminal is gone, which forgets the
+   * session; a deferral is still a live session.
+   */
+  private boolean deliver(String commandId, InteractiveName session) {
+    synchronized (session) {
+      if (session.pending == null || !IDLE.equals(session.state)) {
+        return true;
+      }
+      switch (commands.sendKeystrokesUnlessDraft(commandId, "/rename " + session.pending)) {
+        case WRITTEN -> {
+          session.carried = session.pending;
+          session.pending = null;
+          return true;
+        }
+        case HELD_FOR_DRAFT -> {
+          return true;
+        }
+        default -> {
+          renameableInteractive.remove(commandId, session);
+          return false;
+        }
+      }
+    }
   }
 
   /** The bootstrap sentence this host seeds a {@code deliverTaskPrompt} launch with. */
@@ -474,20 +626,43 @@ public final class AgentLaunchService {
         renderedInteractive(
             request.scope(), surface, turns.isEmpty() ? null : turns.get(0), pinned, type);
     LaunchSpec spec = rendered.spec();
-    Command command =
-        commands.launchAgent(
-            interactiveNameFor(request.scope(), surface, type),
-            spec.script(),
-            true,
-            spec.environment(),
-            pinned.commandId(),
-            pinned.ref(),
-            transcriptSweep(),
-            new AgentLaunchMetadata(
-                type.name(),
-                surface.key(),
-                rendered.record().toJson(),
-                rendered.redactions()));
+    // Renameable when it asked for a bridge under a name: Claude with the knob on. Entered before
+    // the spawn so an early hook has somewhere to land, and so a setEntity racing the spawn queues
+    // its name here rather than missing the session — retargeted once more below for one that came
+    // between the render and this line.
+    String rendersAs = rendered.record().remoteControlName();
+    InteractiveName tracked = null;
+    if (!rendersAs.isBlank()) {
+      tracked = new InteractiveName(surface.key(), rendersAs);
+      renameableInteractive.put(pinned.commandId(), tracked);
+    }
+    CommandExitListener sweep = transcriptSweep();
+    Command command;
+    try {
+      command =
+          commands.launchAgent(
+              interactiveNameFor(request.scope(), surface, type),
+              spec.script(),
+              true,
+              spec.environment(),
+              pinned.commandId(),
+              pinned.ref(),
+              (commandId, exitCode, terminatedManually) -> {
+                renameableInteractive.remove(commandId);
+                sweep.onExit(commandId, exitCode, terminatedManually);
+              },
+              new AgentLaunchMetadata(
+                  type.name(),
+                  surface.key(),
+                  rendered.record().toJson(),
+                  rendered.redactions()));
+    } catch (RuntimeException e) {
+      renameableInteractive.remove(pinned.commandId());
+      throw e;
+    }
+    if (tracked != null) {
+      retarget(pinned.commandId(), tracked);
+    }
     for (String turn : turns.subList(Math.min(1, turns.size()), turns.size())) {
       commands.sendKeystrokes(command.id(), turn);
     }
@@ -821,51 +996,48 @@ public final class AgentLaunchService {
       return process -> new StreamJsonChatProtocol(process, pinned.commandId(), null);
     }
     return process -> {
-      // Named at spawn rather than when the factory was built, with the flag it was named under
-      // noted for trackRenameable to compare against once the chat is registered.
-      boolean namedBlocked = blocked;
-      namedAtSpawn.put(pinned.commandId(), namedBlocked);
-      return new StreamJsonChatProtocol(
-          process, pinned.commandId(), sessionName(surface.key(), namedBlocked));
+      // Named at spawn rather than when the factory was built, with the name noted for
+      // trackRenameable to compare against once the chat is registered.
+      String name = sessionName(surface.key());
+      namedAtSpawn.put(pinned.commandId(), name);
+      return new StreamJsonChatProtocol(process, pinned.commandId(), name);
     };
   }
 
   /**
-   * Makes a just-launched chat renameable by {@link #setBlocked}, if its transport was a named
-   * Claude one — a Kimi chat or one with Remote Control off left nothing in {@link #namedAtSpawn},
-   * and this is then a no-op.
+   * Makes a just-launched chat renameable by {@link #setEntity}, if its transport was a named Claude
+   * one — a Kimi chat or one with Remote Control off left nothing in {@link #namedAtSpawn}, and this
+   * is then a no-op.
    *
    * <p>The order closes the window between spawn and registration. The entry is published first and
-   * the flag re-read after: a {@code setBlocked} whose store came later iterates after the publish
+   * the name re-rendered after: a {@code setEntity} whose store came later iterates after the publish
    * and renames the chat itself; one whose store came earlier is seen here, and the chat is renamed
-   * from here. Either way no session keeps a name rendered under a flag that has since moved.
+   * from here. Either way no session keeps a name rendered from facts that have since moved.
    */
   private void trackRenameable(String commandId, AgentSurface surface) {
-    Boolean namedBlocked = namedAtSpawn.remove(commandId);
-    if (namedBlocked == null) {
+    String named = namedAtSpawn.remove(commandId);
+    if (named == null) {
       return;
     }
     renameableChats.put(commandId, surface.key());
-    if (blocked != namedBlocked) {
-      commands.chatRename(commandId, sessionName(surface.key()));
+    String current = sessionName(surface.key());
+    if (!current.equals(named)) {
+      commands.chatRename(commandId, current);
     }
   }
 
   /**
-   * The one place a session name is computed: this container's entity id, the surface, the checkout
-   * branch and whether the entity is blocked right now. The chat transport, the launch record and the
-   * interactive flag all ask here, so the name a launch records is the name it was given.
+   * The one place a session name is computed: this container's entity id, the entity facts as they
+   * stand right now, the surface and the checkout branch. The chat transport, the launch record, the
+   * interactive flag and every live rename all ask here, so the name a launch records is the name it
+   * was given.
    */
   private String sessionName(String surfaceKey) {
-    return sessionName(surfaceKey, blocked);
-  }
-
-  private String sessionName(String surfaceKey, boolean blocked) {
     return AgentRemoteControl.sessionName(
-        defaults.entityId().orElse(null),
+        defaults == null ? null : defaults.entityId().orElse(null),
+        entity,
         surfaceKey,
-        checkout == null ? null : checkout.branch(),
-        blocked);
+        checkout == null ? null : checkout.branch());
   }
 
   /**

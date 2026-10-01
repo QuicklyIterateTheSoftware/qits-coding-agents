@@ -82,6 +82,15 @@ final class CommandSession {
   private volatile boolean terminatedManually;
 
   /**
+   * Whether the person at the browser terminal has typed something they have not submitted — moved
+   * only by {@link #personInput}, under {@link #stdinLock}, and never by the server's own writes.
+   */
+  private volatile boolean draft;
+
+  /** The last character of the previous person frame; under {@link #stdinLock}. */
+  private char lastPersonChar;
+
+  /**
    * Signalled once the reader has computed the authoritative exit code and run the exit listener.
    */
   private final CountDownLatch finished = new CountDownLatch(1);
@@ -162,18 +171,86 @@ final class CommandSession {
     sinks.remove(sink);
   }
 
-  /** Forward a client's keystrokes to the terminal. */
+  /**
+   * Forward keystrokes to the terminal on the server's behalf — an opening turn, a typed-in prompt
+   * relayed from the API. Leaves {@link #hasDraft()} alone: only the person's own typing says
+   * anything about what is sitting unsent in the input line. See {@link #personInput}.
+   */
   void input(byte[] data) {
     synchronized (stdinLock) {
-      try {
-        OutputStream out = pty.out();
-        out.write(data);
-        out.flush();
-      } catch (IOException e) {
-        LOG.log(Level.DEBUG, () -> "stdin write failed for command " + commandId, e);
-      }
-      frameInput(new String(data, StandardCharsets.UTF_8));
+      write(data);
     }
+  }
+
+  /**
+   * Forward the person's keystrokes from the attached browser terminal, and keep {@link #hasDraft()}
+   * current from them.
+   *
+   * <p>The rule is deliberately crude, because it only ever decides whether something may be typed
+   * <em>on top of</em> the person's input line, and the cost of a wrong "dirty" is a delayed rename
+   * while the cost of a wrong "clean" is a {@code /rename} glued onto half a sentence and submitted.
+   * A frame with anything after its last {@code \r}/{@code \n} leaves a draft; a frame ending in a
+   * submitting {@code \r}/{@code \n} clears it. Arrow keys, Esc and Ctrl+C therefore read as a draft
+   * until the next Enter, which is only a delay. Two newline shapes do <em>not</em> clear it, because
+   * they insert a line into the prompt rather than submitting it: Meta+Enter ({@code ESC \r}) and the
+   * harness's backslash-Enter continuation.
+   *
+   * <p>One shape is ignored outright: a focus report ({@code ESC [ I} / {@code ESC [ O}), which
+   * xterm.js sends on its own whenever the browser tab gains or loses focus once the TUI has asked
+   * for focus reporting. It is the terminal talking, not the person typing, and counting it would
+   * hold every rename until the person next pressed Enter merely because they switched tabs.
+   */
+  void personInput(byte[] data) {
+    synchronized (stdinLock) {
+      write(data);
+      String text = new String(data, StandardCharsets.UTF_8);
+      if (text.isEmpty() || "\u001b[I".equals(text) || "\u001b[O".equals(text)) {
+        return;
+      }
+      int last = Math.max(text.lastIndexOf('\r'), text.lastIndexOf('\n'));
+      if (last < text.length() - 1) {
+        draft = true;
+      } else {
+        // xterm.js sends one frame per keystroke, so the backslash before a continuation Enter is
+        // usually the previous frame's last character rather than this one's.
+        char before = last > 0 ? text.charAt(last - 1) : lastPersonChar;
+        draft = before == '\u001b' || before == '\\';
+      }
+      lastPersonChar = text.charAt(text.length() - 1);
+    }
+  }
+
+  /**
+   * {@link #input}, but only when the person has nothing unsent in the input line; false, and
+   * nothing written, when they have. Checked and written under the stdin lock, so no person frame
+   * lands between the check and the write — one already in flight from the browser still can, and
+   * that window is the irreducible part.
+   */
+  boolean inputUnlessDraft(byte[] data) {
+    synchronized (stdinLock) {
+      if (draft) {
+        return false;
+      }
+      write(data);
+      return true;
+    }
+  }
+
+  /** Whether the person's browser terminal left something typed but not submitted. */
+  boolean hasDraft() {
+    return draft;
+  }
+
+  /** Writes to the terminal and frames the bytes for the stdin log. Callers hold the stdin lock. */
+  private void write(byte[] data) {
+    try {
+      OutputStream out = pty.out();
+      out.write(data);
+      out.flush();
+    } catch (IOException e) {
+      LOG.log(Level.DEBUG, () -> "stdin write failed for command " + commandId, e);
+    }
+    frameInput(new String(data, StandardCharsets.UTF_8));
   }
 
   /**

@@ -3,6 +3,7 @@ package eu.wohlben.qits.agents;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Remote Control: the session name a launch passes, and the four environment variables that turn the
@@ -24,12 +25,29 @@ import java.util.Map;
  *
  * <p><b>The name is worth passing.</b> Left to itself the harness derives the session name from the
  * hostname, so every session this platform starts would be indistinguishable in the claude.ai
- * session list — a list whose whole job is telling sessions apart. The qualified entity id leads
- * when one is known, because it is the handle a person already uses for the same work everywhere
- * else — MCP tools, comments, {@code qits work} — and because the claude.ai list truncates the tail
- * of a long name, where a surface key is identical across every session this platform ever
- * dispatches. The surface-and-branch shape stays as the fallback for a container that cannot answer
- * which ticket or epic it is for.
+ * session list — a list whose whole job is telling sessions apart. When the container was created
+ * for a ticket or epic the name reads like the board does: the entity's status square, its
+ * qualified id and its title — {@code 🟦 qits-555 Comments on every work entity}. The square says
+ * which phase the work is in at a glance, in the palette the UI's badges use ({@link
+ * EntityStatusSquare}); the id is the handle a person already uses for the same work everywhere
+ * else — MCP tools, comments, {@code qits work} — and is how they get from the session to its
+ * ticket; the title is what they recognise it by. The branch and the entity type used to be in the
+ * name and are not any more: the branch slug was a mangled copy of the title that the list
+ * truncated anyway, and the type is visible on the ticket the id leads to.
+ *
+ * <p>Two sessions of the same entity — its refine session and its implement session — now carry the
+ * same name. That is accepted (qits-617): the owner chose to drop the branch, and the square tells
+ * the phases apart once the entity has moved on.
+ *
+ * <p>The project desk, which runs for no entity, is named {@link #FRONT_DESK_NAME} rather than by
+ * its internal surface key; every other entity-less session keeps the {@code qits <surface>
+ * <branch>} shape, because an ad-hoc workspace or an editor has nothing better to be called.
+ *
+ * <p><b>The name is typed, not only passed.</b> A live rename of an interactive session is {@code
+ * /rename <name>} followed by Enter, written into its PTY, so a newline inside a name would submit
+ * half of it as a prompt. That is why the title — the one part a person writes freely — is
+ * sanitised here rather than trusted, and why the whole name is stripped of control characters on
+ * its way out.
  */
 public final class AgentRemoteControl {
 
@@ -71,63 +89,144 @@ public final class AgentRemoteControl {
   }
 
   /**
-   * The name a session is listed under: the qualified entity id it runs for, when one is known,
-   * else what it is for and which piece of work it is in.
-   *
-   * <p>Blank counts as absent for every argument, including a trimmed {@code entityId}. With an id
-   * and a branch the name is {@code "<entityId>: <branch>"} — {@code qits-614: ticket/some-slug} —
-   * because the id is the handle a person already uses for this work, and the branch after the colon
-   * says which piece of it this session is in. With an id and no branch the name is the id alone. With
-   * no id this falls back to today's shape: {@code qits} leads because that list is not this
-   * platform's — it holds whatever else the operator's account is running — and the surface key and
-   * the branch are the two facts that tell one platform session from another. A container that does
-   * not know its branch yet is named by its surface alone rather than by nothing.
-   */
-  public static String sessionName(String entityId, String surfaceKey, String branch) {
-    return sessionName(entityId, surfaceKey, branch, false);
-  }
-
-  /**
-   * What a blocked entity's sessions are listed with in front of their name: {@code "❗ "}, the
-   * marker and one space.
+   * What a blocked entity's sessions are listed with in front of their name: {@code ❗}, U+2757.
    *
    * <p>In front because the claude.ai list truncates the tail of a name, and a person scanning it
    * for "which of these needs me" reads from the left. A symbol rather than a word because a word
-   * would push the entity id — the handle the rest of the name exists to show — further into the
-   * part that gets cut.
+   * would push the id and title — the parts the rest of the name exists to show — further into the
+   * part that gets cut. Red, and the only red in the name: the status palette leaves red to blocked
+   * exactly as the UI's badges do (see {@link EntityStatusSquare}).
+   *
+   * <p>It sits directly against the status square, with no space — {@code ❗🟦 qits-555 …} — so the
+   * two read as one marker; where there is no square it is followed by one space, {@link
+   * #BLOCKED_MARKER}.
    */
-  public static final String BLOCKED_MARKER = "\u2757 ";
+  public static final String BLOCKED_GLYPH = "\u2757";
 
   /**
-   * {@link #sessionName(String, String, String)}, led by {@link #BLOCKED_MARKER} when the entity the
-   * session works on is blocked: {@code ❗ qits-614: ticket/some-slug}. The marker goes in front of
-   * whichever shape the rest renders, the {@code qits <surface> <branch>} fallback included — a
-   * container that cannot name its entity can still have been told it is blocked, and the marker is
-   * the part of the name that asks for a person.
+   * {@link #BLOCKED_GLYPH} and one space: the marker in front of a name that has no status square —
+   * a status the container does not know, or a session for no entity at all. qits-614's shape,
+   * kept where nothing stands beside it.
+   */
+  public static final String BLOCKED_MARKER = BLOCKED_GLYPH + " ";
+
+  /**
+   * The project desk's name: {@link AgentSurface#PROJECT_WORK} runs for no entity, so the
+   * entity-less fallback would call it {@code qits project.work} — an internal key no person
+   * recognises. A bug icon stands in the slot the status square takes, so the desk lines up with the
+   * entity sessions beside it in the list.
+   */
+  public static final String FRONT_DESK_NAME = "\uD83D\uDC1E qits front desk";
+
+  /**
+   * How many code points of a title a name keeps. Long enough for every title a person writes as a
+   * title; short enough that a pasted paragraph does not become a session name. A cut title ends in
+   * {@code …}, which counts towards the limit.
+   */
+  public static final int TITLE_LIMIT = 120;
+
+  /**
+   * The name a session is listed under.
+   *
+   * <p>With an entity — a non-blank {@code entityId}, trimmed — the name is {@code
+   * [❗]<square> <entityId> <title>}: {@code 🟦 qits-555 Comments on every work entity}, or {@code
+   * ❗🟦 qits-555 Comments on every work entity} while it is blocked. It degrades one fact at a time
+   * rather than falling back wholesale, because each fact is independently useful:
+   *
+   * <ul>
+   *   <li>a status this library cannot square (absent, or a word {@link EntityStatusSquare} does
+   *       not know) drops the square, and a blocked marker keeps its space: {@code ❗ qits-555
+   *       Comments on every work entity};
+   *   <li>an absent title — or one that sanitises to nothing — drops the title and keeps the id:
+   *       {@code 🟦 qits-555}.
+   * </ul>
+   *
+   * <p>Without an entity, {@link AgentSurface#PROJECT_WORK} is {@link #FRONT_DESK_NAME}, and every
+   * other surface keeps the old shape: {@code qits} leads because that list is not this platform's
+   * — it holds whatever else the operator's account is running — and the surface key and the branch
+   * are the two facts that tell one platform session from another; a container that does not know
+   * its branch is named by its surface alone. A blocked flag still puts {@link #BLOCKED_MARKER} in
+   * front of either: a container that cannot name its entity can still have been told it is
+   * blocked, and the marker is the part of the name that asks for a person.
+   *
+   * <p>{@code branch} is read only on that last shape. Null {@code facts} is {@link
+   * EntityFacts#NONE}; blank counts as absent for every string.
    */
   public static String sessionName(
-      String entityId, String surfaceKey, String branch, boolean blocked) {
-    String name = unmarkedName(entityId, surfaceKey, branch);
-    return blocked ? BLOCKED_MARKER + name : name;
+      String entityId, EntityFacts facts, String surfaceKey, String branch) {
+    EntityFacts known = facts == null ? EntityFacts.NONE : facts;
+    String id = entityId == null ? "" : entityId.trim();
+    String name;
+    if (!id.isEmpty()) {
+      Optional<EntityStatusSquare> square = EntityStatusSquare.of(known.status());
+      String lead =
+          square
+              .map(s -> (known.blocked() ? BLOCKED_GLYPH : "") + s.square() + " ")
+              .orElse(known.blocked() ? BLOCKED_MARKER : "");
+      String title = sanitisedTitle(known.title());
+      name = title.isEmpty() ? lead + id : lead + id + " " + title;
+    } else {
+      String unmarked = entityLessName(surfaceKey, branch);
+      name = known.blocked() ? BLOCKED_MARKER + unmarked : unmarked;
+    }
+    return withoutControls(name);
   }
 
-  private static String unmarkedName(String entityId, String surfaceKey, String branch) {
-    String id = entityId == null ? "" : entityId.trim();
-    if (!id.isBlank()) {
-      return branch == null || branch.isBlank() ? id : id + ": " + branch;
+  /** {@link #sessionName(String, EntityFacts, String, String)} for a surface value. */
+  public static String sessionName(
+      String entityId, EntityFacts facts, AgentSurface surface, String branch) {
+    return sessionName(entityId, facts, surface == null ? null : surface.key(), branch);
+  }
+
+  private static String entityLessName(String surfaceKey, String branch) {
+    if (AgentSurface.PROJECT_WORK.key().equals(surfaceKey)) {
+      return FRONT_DESK_NAME;
     }
     String key = surfaceKey == null || surfaceKey.isBlank() ? "session" : surfaceKey;
     return branch == null || branch.isBlank() ? "qits " + key : "qits " + key + " " + branch;
   }
 
-  /** {@link #sessionName(String, String, String)} for a surface value. */
-  public static String sessionName(String entityId, AgentSurface surface, String branch) {
-    return sessionName(entityId, surface, branch, false);
+  /**
+   * A title made safe to be one line of a name typed into a terminal: every control character —
+   * newline, carriage return and tab included — becomes a space, runs of whitespace collapse to one
+   * space, the ends are trimmed, and anything past {@link #TITLE_LIMIT} code points is cut and ended
+   * with {@code …}. Empty for a null or blank title.
+   *
+   * <p>Counted in code points, not chars, and cut on a code point boundary, so an emoji in a title
+   * is never split into half a surrogate pair — which a terminal would render as a replacement
+   * character, and the harness might refuse.
+   */
+  public static String sanitisedTitle(String title) {
+    if (title == null) {
+      return "";
+    }
+    StringBuilder collapsed = new StringBuilder(title.length());
+    boolean pendingSpace = false;
+    for (int i = 0; i < title.length(); ) {
+      int cp = title.codePointAt(i);
+      i += Character.charCount(cp);
+      if (Character.isISOControl(cp) || Character.isWhitespace(cp) || Character.isSpaceChar(cp)) {
+        pendingSpace = true;
+        continue;
+      }
+      if (pendingSpace && !collapsed.isEmpty()) {
+        collapsed.append(' ');
+      }
+      pendingSpace = false;
+      collapsed.appendCodePoint(cp);
+    }
+    String clean = collapsed.toString();
+    if (clean.codePointCount(0, clean.length()) <= TITLE_LIMIT) {
+      return clean;
+    }
+    String cut = clean.substring(0, clean.offsetByCodePoints(0, TITLE_LIMIT - 1)).stripTrailing();
+    return cut + "\u2026";
   }
 
-  /** {@link #sessionName(String, String, String, boolean)} for a surface value. */
-  public static String sessionName(
-      String entityId, AgentSurface surface, String branch, boolean blocked) {
-    return sessionName(entityId, surface == null ? null : surface.key(), branch, blocked);
+  /** Every control character in a finished name as a space — the PTY-safety net for all of it. */
+  private static String withoutControls(String name) {
+    StringBuilder out = new StringBuilder(name.length());
+    name.codePoints().forEach(cp -> out.appendCodePoint(Character.isISOControl(cp) ? ' ' : cp));
+    return out.toString();
   }
 }

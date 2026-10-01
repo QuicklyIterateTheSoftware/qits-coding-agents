@@ -376,6 +376,62 @@ class CommandRegistryTest {
   }
 
   @Test
+  void onlyThePersonsTypingMovesTheDraftFlag(@TempDir Path workspace) throws Exception {
+    CommandRegistry registry = new CommandRegistry(workspace, 2_000);
+    // Nothing reads the terminal: the bytes sit in its buffer, which is all a draft test needs.
+    registry.spawn("c9", "sleep 30", Map.of(), (id, c, m) -> {}, null, new RecordingSink());
+    waitUntil(() -> registry.isRunning("c9"), 10_000);
+    try {
+      assertFalse(registry.hasDraft("c9"), "a fresh session has an empty input line");
+
+      assertTrue(registry.input("c9", bytes("injected by the server")));
+      assertFalse(registry.hasDraft("c9"), "the server's own writes say nothing about a draft");
+
+      assertTrue(registry.personInput("c9", bytes("h")));
+      assertTrue(registry.hasDraft("c9"), "a typed character is a draft");
+      assertEquals(GuardedInput.HELD_FOR_DRAFT, registry.inputUnlessDraft("c9", bytes("/rename x\r")));
+
+      registry.personInput("c9", bytes("\r"));
+      assertFalse(registry.hasDraft("c9"), "Enter submits it");
+      assertEquals(GuardedInput.WRITTEN, registry.inputUnlessDraft("c9", bytes("/rename x\r")));
+
+      registry.personInput("c9", bytes("done\rnext"));
+      assertTrue(registry.hasDraft("c9"), "what follows the last newline is a new draft");
+      registry.personInput("c9", bytes("line\n"));
+      assertFalse(registry.hasDraft("c9"), "a frame ending in a newline clears it");
+
+      registry.personInput("c9", bytes("\u001b[A"));
+      assertTrue(registry.hasDraft("c9"), "an arrow key is conservatively a draft");
+      registry.personInput("c9", bytes("\r"));
+
+      registry.personInput("c9", bytes("multi"));
+      registry.personInput("c9", bytes("\u001b\r"));
+      assertTrue(registry.hasDraft("c9"), "Meta+Enter inserts a line rather than submitting");
+      registry.personInput("c9", bytes("\\"));
+      registry.personInput("c9", bytes("\r"));
+      assertTrue(registry.hasDraft("c9"), "a backslash-Enter continuation, one keystroke per frame");
+      registry.personInput("c9", bytes("\r"));
+      assertFalse(registry.hasDraft("c9"));
+
+      registry.personInput("c9", bytes("\u001b[I"));
+      registry.personInput("c9", bytes("\u001b[O"));
+      assertFalse(registry.hasDraft("c9"), "a focus report is the terminal talking, not the person");
+      registry.personInput("c9", bytes("x"));
+      registry.personInput("c9", bytes("\u001b[O"));
+      assertTrue(registry.hasDraft("c9"), "and it does not clear a draft either");
+    } finally {
+      registry.terminate("c9");
+    }
+    assertFalse(registry.personInput("never-launched", bytes("x")));
+    assertFalse(registry.hasDraft("never-launched"));
+    assertEquals(GuardedInput.NOT_RUNNING, registry.inputUnlessDraft("never-launched", bytes("x")));
+  }
+
+  private static byte[] bytes(String text) {
+    return text.getBytes(StandardCharsets.UTF_8);
+  }
+
+  @Test
   void isRunningIsFalseForAnUnknownCommand(@TempDir Path workspace) {
     CommandRegistry registry = new CommandRegistry(workspace, 2_000);
     assertFalse(registry.isRunning("never-launched"));

@@ -8,6 +8,7 @@ import eu.wohlben.qits.commands.CommandExitListener;
 import eu.wohlben.qits.commands.CommandRegistry;
 import eu.wohlben.qits.commands.CommandService;
 import eu.wohlben.qits.commands.CommandStore;
+import eu.wohlben.qits.commands.GuardedInput;
 import java.util.Map;
 import java.util.Optional;
 
@@ -68,6 +69,17 @@ public final class CommandsAgentCommands implements AgentCommands {
     // A carriage return rather than a newline: that is what a terminal sends for Enter, and what the
     // attached xterm.js writes on the same channel.
     return registry.input(commandId, (text + "\r").getBytes(java.nio.charset.StandardCharsets.UTF_8));
+  }
+
+  @Override
+  public boolean hasDraft(String commandId) {
+    return registry.hasDraft(commandId);
+  }
+
+  @Override
+  public GuardedInput sendKeystrokesUnlessDraft(String commandId, String text) {
+    return registry.inputUnlessDraft(
+        commandId, (text + "\r").getBytes(java.nio.charset.StandardCharsets.UTF_8));
   }
 
   @Override
