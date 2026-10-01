@@ -337,11 +337,44 @@ final class ChatSession {
     // A compound script's children are only reachable through the process group, which the launch
     // recorded to a pid file under setsid; escalate to SIGKILL after the grace period.
     killGroup("TERM");
-    if (awaitExit(graceMillis) < 0) {
+    escalate(System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(graceMillis));
+  }
+
+  /**
+   * The graceful half of a shutdown-wide stop ({@link CommandRegistry#terminateAll()}): mark the
+   * exit as manual and SIGTERM the group, without waiting and <em>before</em> the transport is
+   * closed. The order is the opposite of {@link #terminate()} on purpose: {@code claude
+   * --remote-control} archives its claude.ai session only on SIGTERM, and an EOF on stdin arriving
+   * first can make it exit cleanly without archiving — leaving the remote session dangling.
+   */
+  void beginTerminate() {
+    terminatedManually = true;
+    killGroup("TERM");
+  }
+
+  /**
+   * The escalating half of {@link #beginTerminate()}: wait for the exit until {@code deadlineNanos}
+   * (a {@link System#nanoTime()} instant shared by every session being stopped), then close the
+   * transport and escalate exactly as {@link #terminate()} does. The transport closes only after
+   * the wait, so the agent handles SIGTERM undisturbed by an EOF.
+   */
+  void finishTerminate(long deadlineNanos) {
+    awaitExit(remainingMillis(deadlineNanos));
+    protocol.close();
+    escalate(deadlineNanos);
+  }
+
+  /** Wait until the deadline, SIGKILL the group if it is still alive, then reap the process. */
+  private void escalate(long deadlineNanos) {
+    if (awaitExit(remainingMillis(deadlineNanos)) < 0) {
       killGroup("KILL");
     }
     process.destroy();
     awaitExit(TimeUnit.SECONDS.toMillis(2));
+  }
+
+  private static long remainingMillis(long deadlineNanos) {
+    return Math.max(0, TimeUnit.NANOSECONDS.toMillis(deadlineNanos - System.nanoTime()));
   }
 
   /**
@@ -371,6 +404,10 @@ final class ChatSession {
       Thread.currentThread().interrupt();
       return false;
     }
+  }
+
+  String commandId() {
+    return commandId;
   }
 
   boolean isAlive() {

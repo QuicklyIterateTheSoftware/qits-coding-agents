@@ -2,12 +2,15 @@ package eu.wohlben.qits.commands;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.lang.System.Logger;
+import java.lang.System.Logger.Level;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 
 /**
  * The live registry of running command processes, keyed by durable command id. Owns each {@link
@@ -39,6 +42,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * full-screen TUI falls back to line mode.
  */
 public final class CommandRegistry {
+
+  private static final Logger LOG = System.getLogger(CommandRegistry.class.getName());
 
   /** Where a launched script records its process-group id, by command id. */
   private static final String PID_FILE_PREFIX = "/tmp/qits-cmd-";
@@ -320,6 +325,77 @@ public final class CommandRegistry {
       return true;
     }
     return false;
+  }
+
+  /**
+   * Stop every running command, terminal and chat alike — the daemon's shutdown path. Each is
+   * reported as manually terminated, exactly as {@link #terminate} would report it.
+   *
+   * <p>Why not loop over {@link #terminate}: that waits one grace period per session, and the
+   * container's stop budget (docker's 10 seconds) is shorter than a handful of graces. A session
+   * that the budget cuts off is SIGKILLed by docker instead, and {@code claude --remote-control}
+   * archives its claude.ai session only on SIGTERM — so every agent past the budget would leave a
+   * dangling remote session. Instead every group gets SIGTERM first, before anything waits; then
+   * all of them share one deadline of the grace period; then whatever is still alive is escalated
+   * the way {@link #terminate} escalates it. N agents cost about one grace, not N.
+   *
+   * <p>The escalation runs on one thread per session, so a session whose KILL does not land (no pid
+   * file, say) spends its fallback wait concurrently with the others rather than in series.
+   *
+   * <p>Idempotent and never throws: sessions that already exited, an empty registry and a second
+   * call are all no-ops, and a failure stopping one session does not spare the rest.
+   */
+  public void terminateAll() {
+    List<CommandSession> terminals = List.copyOf(sessions.values());
+    List<ChatSession> chatSessions = List.copyOf(chats.values());
+    if (terminals.isEmpty() && chatSessions.isEmpty()) {
+      return;
+    }
+
+    // Phase one: SIGTERM to every group, nothing waited on yet.
+    for (CommandSession session : terminals) {
+      attempt(session.commandId(), session::beginTerminate);
+    }
+    for (ChatSession chat : chatSessions) {
+      attempt(chat.commandId(), chat::beginTerminate);
+    }
+
+    // Phase two: one deadline, taken once every signal is out, shared by every session. A session
+    // whose SIGTERM failed is still escalated — the KILL and descendant fallback may yet land.
+    long deadlineNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(graceMillis);
+    List<Thread> escalations = new ArrayList<>();
+    for (CommandSession session : terminals) {
+      escalations.add(
+          escalation(session.commandId(), () -> session.finishTerminate(deadlineNanos)));
+    }
+    for (ChatSession chat : chatSessions) {
+      escalations.add(escalation(chat.commandId(), () -> chat.finishTerminate(deadlineNanos)));
+    }
+    for (Thread escalation : escalations) {
+      try {
+        escalation.join();
+      } catch (InterruptedException e) {
+        // Shutdown was interrupted; the escalation threads carry on regardless.
+        Thread.currentThread().interrupt();
+        return;
+      }
+    }
+  }
+
+  private static Thread escalation(String commandId, Runnable step) {
+    return Thread.ofPlatform()
+        .name("terminate-" + commandId)
+        .daemon(true)
+        .start(() -> attempt(commandId, step));
+  }
+
+  /** Run one session's step, so a failure on one session never stops the others. */
+  private static void attempt(String commandId, Runnable step) {
+    try {
+      step.run();
+    } catch (RuntimeException e) {
+      LOG.log(Level.WARNING, () -> "Terminating command " + commandId + " failed", e);
+    }
   }
 
   public boolean isRunning(String commandId) {

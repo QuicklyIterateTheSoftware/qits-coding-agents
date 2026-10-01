@@ -202,9 +202,29 @@ final class CommandSession {
    * container. The terminal is then closed to unblock the reader's blocking read.
    */
   void terminate() {
+    beginTerminate();
+    finishTerminate(System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(graceMillis));
+  }
+
+  /**
+   * The graceful half of {@link #terminate()}: mark the exit as manual and send the group SIGTERM,
+   * without waiting. Split out so {@link CommandRegistry#terminateAll()} can signal every session
+   * before it waits on any of them — waiting per session would cost one grace period each.
+   */
+  void beginTerminate() {
     terminatedManually = true;
     killGroup("TERM");
-    if (awaitExit(graceMillis) < 0) {
+  }
+
+  /**
+   * The escalating half of {@link #terminate()}: wait for the exit until {@code deadlineNanos} (a
+   * {@link System#nanoTime()} instant, so several sessions can share one deadline), then SIGKILL the
+   * group, fall back to the descendants, and close the terminal so {@link #finish()} runs.
+   */
+  void finishTerminate(long deadlineNanos) {
+    long remainingMillis =
+        Math.max(0, TimeUnit.NANOSECONDS.toMillis(deadlineNanos - System.nanoTime()));
+    if (awaitExit(remainingMillis) < 0) {
       killGroup("KILL");
       if (awaitExit(TimeUnit.SECONDS.toMillis(2)) < 0) {
         // Nothing reached the group (e.g. the script never wrote its pid file). Walk the process
@@ -251,6 +271,10 @@ final class CommandSession {
       Thread.currentThread().interrupt();
       return false;
     }
+  }
+
+  String commandId() {
+    return commandId;
   }
 
   boolean isAlive() {
