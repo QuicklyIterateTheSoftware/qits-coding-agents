@@ -125,10 +125,13 @@ already resolved, so a container needs no second lookup — and they render into
 because both harnesses interpolate the serialized form into a shell argument the suites assert
 literally. Three rules travel with them:
 
-- `repository`, `actions` and `observability` are **reserved**, checked again at render and not only
-  at the store's write door. An external entry under one of those names does not attach twice, it
-  displaces the platform's own server in the one key-to-config object, and the session looks entirely
-  normal while talking to somebody else's;
+- `repository`, `actions`, `observability` and `qits` are **reserved**, checked again at render and
+  not only at the store's write door. An external entry under one of those names does not attach
+  twice, it displaces the platform's own server in the one key-to-config object, and the session looks
+  entirely normal while talking to somebody else's. `qits` (qits-630) is the central platform-access
+  MCP server — the `qits` CLI served over HTTP — rendered with a `headersHelper`
+  (`McpServers.httpMcpWithHeadersHelper`, interim until qits-684) and pre-approved on Claude
+  (`mcp__qits__*`);
 - a **header value is never stored**. The process is spawned with the script as rendered; the command
   keeps that script with each header value replaced (`AgentLaunchMetadata.redact`), the launch record
   names attached servers **by key**, and `AgentExternalMcpServer.toString` redacts;

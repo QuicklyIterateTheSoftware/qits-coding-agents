@@ -174,6 +174,19 @@ public final class AgentLaunchService {
   /** Kimi session ids are opaque {@code session_}-prefixed path-safe slugs. */
   private static final String KIMI_SESSION_PATTERN = "session_[A-Za-z0-9_-]{1,128}";
 
+  /**
+   * The key the central platform-access MCP server attaches under — see {@link
+   * AgentConfigurationDocument#RESERVED_SERVER_KEYS}.
+   */
+  static final String QITS_MCP_KEY = "qits";
+
+  /**
+   * What {@link #QITS_MCP_KEY} is pre-approved for on Claude: every tool it exposes. The credential
+   * on the call already decides what the tool may do (owner, qits-630), so the pre-approval names the
+   * whole server rather than an enumerated subset.
+   */
+  static final List<String> QITS_PRE_APPROVED_TOOLS = List.of("mcp__qits__*");
+
   private final AgentCommands commands;
   private final AgentAuthStatus authStatus;
   private final AgentTranscriptService transcripts;
@@ -1176,6 +1189,14 @@ public final class AgentLaunchService {
       // ACP session. Adding them here would move a rendered command line this epic promised not to
       // move.
       agent.mcpServer(server.key(), McpServers.httpMcp(server.url()));
+      // ONE exception (qits-630, owner-decided): the central `qits` platform MCP server is
+      // pre-approved on Claude on every surface, skip-permissions or not — the bearer on each call is
+      // the session's own credential, so the server can already refuse anything the caller may not
+      // do, and a surface that prompts should not stop a session on its first qits tool call. Kimi is
+      // out of scope (only Claude's MCP config is wired, per the epic).
+      if (agentType == AgentType.CLAUDE && QITS_MCP_KEY.equals(server.key())) {
+        agent.allowedTools(QITS_PRE_APPROVED_TOOLS);
+      }
     }
     // The catalog's servers, after the platform's own: the key order is deliberate, because both
     // harnesses interpolate the serialized object into a shell argument the suites assert literally.

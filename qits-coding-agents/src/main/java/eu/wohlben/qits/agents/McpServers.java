@@ -50,4 +50,21 @@ public final class McpServers {
     headers.forEach(rendered::put);
     return config.put("headers", rendered);
   }
+
+  /**
+   * The same, with a <b>headers helper</b> instead of a static header: {@code
+   * {"type":"http","url":"<url>","headersHelper":"<command>"}} — Claude Code's MCP config field
+   * naming a command it runs at connect, whose stdout is a JSON object of headers.
+   *
+   * <p><b>Interim (qits-630), owner 2026-10-01.</b> It is how the central {@code qits} platform MCP
+   * server gets a fresh bearer into a long session: the container's commissioned-client token lasts
+   * one hour, so a header written once at launch would go stale. Follow-up qits-684 gives each
+   * workspace a non-time-bounded token issued by its runner instead, and this renders a static {@code
+   * headers} entry in its place — which is why this stays one method rather than two: the swap is one
+   * change here, not a new render path to keep in step with {@link #httpMcp(String)} and {@link
+   * #httpMcp(String, java.util.Map)}.
+   */
+  public static JsonObject httpMcpWithHeadersHelper(String url, String command) {
+    return httpMcp(url).put("headersHelper", command);
+  }
 }

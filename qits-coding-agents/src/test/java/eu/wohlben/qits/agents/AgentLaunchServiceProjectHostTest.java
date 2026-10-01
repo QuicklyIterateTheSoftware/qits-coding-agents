@@ -1588,6 +1588,55 @@ class AgentLaunchServiceProjectHostTest {
     }
   }
 
+  // --- the central qits platform MCP server (qits-630) -------------------------------------------
+
+  /**
+   * The one exception to "built-ins render no {@code --allowedTools}" (see {@link McpScoping}): the
+   * central {@code qits} platform server — reserved as a key (see {@link
+   * AgentConfigurationDocumentTest}) and pre-approved on Claude wherever it is attached, because the
+   * bearer on each call already decides what it may do.
+   */
+  @Nested
+  class QitsPlatformServer {
+
+    private AgentMcpServers withQits() {
+      return scope ->
+          List.of(
+              new ScopedMcp("repository", "http://qits:8080/projects/mcp?projectId=" + PROJECT, List.of()),
+              new ScopedMcp("qits", "http://dev-qits-platform-access-mcp-service:8080/mcp", List.of()));
+    }
+
+    @Test
+    void claudePreApprovesEveryQitsTool() {
+      AgentLaunchService service = serviceWith(withQits());
+      AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
+
+      String script =
+          service
+              .renderChat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK, pinned, AgentType.CLAUDE)
+              .script();
+
+      assertTrue(
+          script.contains("--allowedTools 'mcp__qits__*'"),
+          "the qits server is pre-approved on every surface: " + script);
+    }
+
+    @Test
+    void aSurfaceWithNoQitsServerRendersNoAllowedTools() {
+      // MCP_SERVERS (the projects daemon's real mapping, below) does not attach qits yet — that is
+      // wired in a later task — so this host's launches render no --allowedTools at all today.
+      AgentLaunchService service = service();
+      AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
+
+      String script =
+          service
+              .renderChat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK, pinned, AgentType.CLAUDE)
+              .script();
+
+      assertFalse(script.contains("--allowedTools"), script);
+    }
+  }
+
   // --- the launch record ------------------------------------------------------------------------
 
   /**

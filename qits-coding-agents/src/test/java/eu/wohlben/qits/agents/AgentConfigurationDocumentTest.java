@@ -163,8 +163,28 @@ class AgentConfigurationDocumentTest {
       assertTrue(refused.getMessage().contains("externalMcpServers[0].key"), refused.getMessage());
       assertTrue(refused.getMessage().contains("displace it silently"), refused.getMessage());
       assertEquals(
-          List.of("repository", "actions", "observability"),
+          List.of("repository", "actions", "observability", "qits"),
           AgentConfigurationDocument.RESERVED_SERVER_KEYS);
+    }
+
+    @Test
+    void qitsIsReservedToo() {
+      // The central platform-access MCP server (qits-630) renders under this key in every container;
+      // an external entry taking it would displace the one server whose tools are pre-approved on
+      // every surface.
+      InvalidAgentConfigurationException refused =
+          assertThrows(
+              InvalidAgentConfigurationException.class,
+              () ->
+                  AgentConfigurationDocument.parse(
+                      documentV2(
+                          entry(
+                              SEEDED_EPIC_CHAT,
+                              "{\"key\":\"qits\",\"url\":\"https://elsewhere.example\"}")),
+                      "/etc/qits/agent-configuration.json"));
+
+      assertTrue(refused.getMessage().contains("externalMcpServers[0].key"), refused.getMessage());
+      assertTrue(refused.getMessage().contains("displace it silently"), refused.getMessage());
     }
 
     @Test
