@@ -1607,7 +1607,11 @@ class AgentLaunchServiceProjectHostTest {
     }
 
     @Test
-    void claudePreApprovesEveryQitsTool() {
+    void claudeRendersItWithAHeadersHelperAndPreApprovesEveryTool() {
+      // The defect this covers: a daemon hands the library an ordinary ScopedMcp(key "qits", url) —
+      // the same shape as "repository" — and the library alone has to know this one key needs a
+      // headers helper rather than a bare url, because the central server answers 401 with nothing
+      // in the --mcp-config to say why.
       AgentLaunchService service = serviceWith(withQits());
       AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
 
@@ -1617,8 +1621,44 @@ class AgentLaunchServiceProjectHostTest {
               .script();
 
       assertTrue(
+          script.contains(
+              "\"qits\":{\"type\":\"http\",\"url\":\"http://dev-qits-platform-access-mcp-service:8080/mcp\","
+                  + "\"headersHelper\":\"qits mcp-credential\"}"),
+          script);
+      assertTrue(
           script.contains("--allowedTools 'mcp__qits__*'"),
           "the qits server is pre-approved on every surface: " + script);
+    }
+
+    @Test
+    void anAutonomousRunLeavesTheQitsUrlUnmarked() {
+      // Every OTHER built-in gets ?agentReadOnly=true on an unattended run; qits has no such filter
+      // (the host's ReadOnlyRepositoryToolFilter has nothing to do with the central server) and the
+      // caller's own bearer is what actually fences a call, so marking the url would be decoration
+      // with nothing behind it.
+      AgentLaunchService service = serviceWith(withQits());
+      AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
+
+      String script =
+          service
+              .renderAutonomousChat(
+                  AgentMcpScope.PROJECT, AgentSurface.EPIC_AUTONOMOUS, pinned, AgentType.CLAUDE)
+              .script();
+
+      assertTrue(
+          script.contains(
+              "\"qits\":{\"type\":\"http\",\"url\":\""
+                  + "http://dev-qits-platform-access-mcp-service:8080/mcp\",\"headersHelper\""),
+          "qits carries no agentReadOnly marker: " + script);
+      assertFalse(
+          script.contains("dev-qits-platform-access-mcp-service:8080/mcp?agentReadOnly"), script);
+      assertTrue(
+          script.contains(
+              "\"repository\":{\"type\":\"http\",\"url\":\""
+                  + "http://qits:8080/projects/mcp?projectId="
+                  + PROJECT
+                  + "&agentReadOnly=true\""),
+          "every other built-in still gets marked: " + script);
     }
 
     @Test

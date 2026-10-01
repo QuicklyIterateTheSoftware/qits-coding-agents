@@ -187,6 +187,15 @@ public final class AgentLaunchService {
    */
   static final List<String> QITS_PRE_APPROVED_TOOLS = List.of("mcp__qits__*");
 
+  /**
+   * The headers helper Claude runs at connect for {@link #QITS_MCP_KEY} — see {@link
+   * McpServers#httpMcpWithHeadersHelper}. Interim (qits-630), owner 2026-10-01: a container's
+   * commissioned-client bearer lasts one hour, so a header written once at launch would go stale
+   * mid-session; this command is re-run on every connect instead. Follow-up qits-684 replaces it
+   * with a runner-issued, non-expiring token and this constant retires with it.
+   */
+  static final String QITS_HEADERS_HELPER_COMMAND = "qits mcp-credential";
+
   private final AgentCommands commands;
   private final AgentAuthStatus authStatus;
   private final AgentTranscriptService transcripts;
@@ -1188,14 +1197,25 @@ public final class AgentLaunchService {
       // lists reach a session through the per-server channels instead — Kimi's enabledTools on the
       // ACP session. Adding them here would move a rendered command line this epic promised not to
       // move.
-      agent.mcpServer(server.key(), McpServers.httpMcp(server.url()));
-      // ONE exception (qits-630, owner-decided): the central `qits` platform MCP server is
-      // pre-approved on Claude on every surface, skip-permissions or not — the bearer on each call is
-      // the session's own credential, so the server can already refuse anything the caller may not
-      // do, and a surface that prompts should not stop a session on its first qits tool call. Kimi is
-      // out of scope (only Claude's MCP config is wired, per the epic).
+      // TWO exceptions for the central `qits` platform server (qits-630, owner-decided), Claude only
+      // — Kimi is out of scope, only Claude's MCP config is wired per the epic:
       if (agentType == AgentType.CLAUDE && QITS_MCP_KEY.equals(server.key())) {
+        // it carries a headers helper rather than a plain url, so Claude fetches a fresh bearer at
+        // every connect instead of the launch baking in one that outlives an hour;
+        agent.mcpServer(
+            server.key(),
+            McpServers.httpMcpWithHeadersHelper(server.url(), QITS_HEADERS_HELPER_COMMAND));
+        // and it is pre-approved on every surface, skip-permissions or not — the bearer on each call
+        // is the session's own credential, so the server can already refuse anything the caller may
+        // not do, and a surface that prompts should not stop a session on its first qits tool call.
         agent.allowedTools(QITS_PRE_APPROVED_TOOLS);
+      } else {
+        // Deliberately without agent.allowedTools for every other built-in: no launch shape renders
+        // --allowedTools today (every one of them skips permissions, which makes a pre-approval list
+        // moot), and the built-ins' lists reach a session through the per-server channels instead —
+        // Kimi's enabledTools on the ACP session. Adding them here would move a rendered command line
+        // this epic promised not to move.
+        agent.mcpServer(server.key(), McpServers.httpMcp(server.url()));
       }
     }
     // The catalog's servers, after the platform's own: the key order is deliberate, because both
@@ -1480,9 +1500,19 @@ public final class AgentLaunchService {
     return external;
   }
 
-  /** The same server with its url read-only marked. */
+  /**
+   * The same server with its url read-only marked — except {@link #QITS_MCP_KEY}, left alone. The
+   * marker is {@code ReadOnlyRepositoryToolFilter}'s own query parameter, read by the per-service
+   * hosts this epic is replacing; the central server has no such filter and would simply ignore the
+   * parameter, so appending it would be inert decoration that reads as a fence where there is none.
+   * What actually fences a qits call is the caller's own bearer — an autonomous run's credential
+   * already can't do anything the session itself couldn't — so there is nothing for this method to
+   * add for that key.
+   */
   private static ScopedMcp markReadOnly(ScopedMcp server) {
-    return new ScopedMcp(server.key(), readOnlyMarked(server.url()), server.allowedTools());
+    return QITS_MCP_KEY.equals(server.key())
+        ? server
+        : new ScopedMcp(server.key(), readOnlyMarked(server.url()), server.allowedTools());
   }
 
   /**
