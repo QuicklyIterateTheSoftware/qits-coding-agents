@@ -107,4 +107,19 @@ public interface AgentDefaults {
   default Optional<String> entityId() {
     return Optional.empty();
   }
+
+  /**
+   * Whether the entity {@link #entityId()} names was BLOCKED when this container booted — the seed
+   * for {@code AgentLaunchService}'s blocked flag, which {@code setBlocked} moves from then on.
+   *
+   * <p>Only the initial value: blocking is a state that changes while the container lives, so a host
+   * that learns of a change calls {@code AgentLaunchService.setBlocked} rather than answering
+   * differently here. Seeding matters anyway, because a daemon that restarts inside a container
+   * created for an already-blocked ticket would otherwise launch its next session without the
+   * marker until somebody blocked the ticket again. A default answering {@code false}, for the same
+   * released-artifact reason as everything else on this interface.
+   */
+  default boolean entityBlocked() {
+    return false;
+  }
 }

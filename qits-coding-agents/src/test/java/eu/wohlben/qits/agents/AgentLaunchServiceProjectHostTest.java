@@ -90,6 +90,9 @@ class AgentLaunchServiceProjectHostTest {
   /** The qualified ticket or epic id this container was created for, or empty for most tests. */
   private Optional<String> entityId;
 
+  /** Whether that entity was BLOCKED when this container booted. */
+  private boolean entityBlocked;
+
   @BeforeEach
   void setUp() {
     commands = new Commands();
@@ -99,6 +102,7 @@ class AgentLaunchServiceProjectHostTest {
     configurations = AgentSurfaceConfigurations.shipped();
     ambientFacts = Map.of("project", "qits", "repository", REPO);
     entityId = Optional.empty();
+    entityBlocked = false;
   }
 
   // --- fakes ------------------------------------------------------------------------------------
@@ -109,6 +113,19 @@ class AgentLaunchServiceProjectHostTest {
     private final Map<String, String> ownedSessions = new HashMap<>();
     private final List<String> chatSends = new ArrayList<>();
     private final List<String> keystrokes = new ArrayList<>();
+
+    /**
+     * Whether a chat launch builds its transport the way the real commands layer does — inside the
+     * spawn, before the launch returns. Off by default: most tests read the recorded factory and
+     * would not want a protocol built behind their back.
+     */
+    private boolean spawnTransports;
+
+    /** The chats a {@link #chatRename} reaches; one that is not here has ended. */
+    private final java.util.Set<String> liveChats = new java.util.HashSet<>();
+
+    /** Every {@code chatRename} that reached a live chat, as {@code "<commandId> <name>"}. */
+    private final List<String> renames = new ArrayList<>();
 
     private record Launch(
         String name,
@@ -175,6 +192,10 @@ class AgentLaunchServiceProjectHostTest {
         CommandExitListener onExit,
         ChatProtocolFactory protocolFactory,
         AgentLaunchMetadata agent) {
+      if (spawnTransports && protocolFactory != null) {
+        protocolFactory.create(new SilentProcess());
+        liveChats.add(commandId);
+      }
       return record(
           new Launch(
               name,
@@ -201,6 +222,15 @@ class AgentLaunchServiceProjectHostTest {
     }
 
     @Override
+    public boolean chatRename(String commandId, String name) {
+      if (!liveChats.contains(commandId)) {
+        return false;
+      }
+      renames.add(commandId + " " + name);
+      return true;
+    }
+
+    @Override
     public void reportAgentSession(String commandId, String sessionId, String transcriptPath) {}
 
     @Override
@@ -212,6 +242,37 @@ class AgentLaunchServiceProjectHostTest {
     public Optional<String> agentTypeForSession(String sessionId) {
       return Optional.ofNullable(ownedSessions.get(sessionId));
     }
+  }
+
+  /** A process that is never started: a transport may wrap its stdin, and nothing is ever read. */
+  private static final class SilentProcess extends Process {
+    @Override
+    public java.io.OutputStream getOutputStream() {
+      return java.io.OutputStream.nullOutputStream();
+    }
+
+    @Override
+    public java.io.InputStream getInputStream() {
+      return java.io.InputStream.nullInputStream();
+    }
+
+    @Override
+    public java.io.InputStream getErrorStream() {
+      return java.io.InputStream.nullInputStream();
+    }
+
+    @Override
+    public int waitFor() {
+      return 0;
+    }
+
+    @Override
+    public int exitValue() {
+      return 0;
+    }
+
+    @Override
+    public void destroy() {}
   }
 
   private static final CheckoutContext CHECKOUT_CONTEXT =
@@ -293,6 +354,11 @@ class AgentLaunchServiceProjectHostTest {
           @Override
           public Optional<String> entityId() {
             return entityId;
+          }
+
+          @Override
+          public boolean entityBlocked() {
+            return entityBlocked;
           }
         };
     CommandStore store = new CommandStore();
@@ -1542,6 +1608,75 @@ class AgentLaunchServiceProjectHostTest {
       JsonObject record = new JsonObject(command.agentLaunchRecord());
 
       assertEquals("qits-614: main", record.getString("remoteControlName"));
+    }
+
+    @Test
+    void aLaunchWhileTheEntityIsBlockedRecordsTheMarkedName() {
+      // The container booted for a ticket that was already blocked: the very first launch carries
+      // the marker, with nobody having called setBlocked.
+      entityId = Optional.of("qits-614");
+      entityBlocked = true;
+      configurations = remoteControlOn();
+
+      Command command = service().launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK));
+      JsonObject record = new JsonObject(command.agentLaunchRecord());
+
+      assertEquals("\u2757 qits-614: main", record.getString("remoteControlName"));
+    }
+
+    @Test
+    void setBlockedRenamesALiveRemoteControlChatAndForgetsAnEndedOne() {
+      entityId = Optional.of("qits-614");
+      configurations = remoteControlOn();
+      commands.spawnTransports = true;
+      AgentLaunchService service = service();
+      Command command = service.launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK));
+      assertEquals(
+          "qits-614: main", new JsonObject(command.agentLaunchRecord()).getString("remoteControlName"));
+
+      assertEquals(1, service.setBlocked(true));
+      assertEquals(List.of(command.id() + " \u2757 qits-614: main"), commands.renames);
+      assertEquals(
+          "\u2757 qits-614: main",
+          new JsonObject(
+                  service.launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK))
+                      .agentLaunchRecord())
+              .getString("remoteControlName"),
+          "the next launch renders the flag too");
+
+      commands.liveChats.clear();
+      commands.renames.clear();
+      assertEquals(0, service.setBlocked(false), "both chats have ended; neither answers");
+      commands.liveChats.add(command.id());
+      assertEquals(0, service.setBlocked(true), "and an ended chat was forgotten, not retried");
+      assertTrue(commands.renames.isEmpty());
+    }
+
+    @Test
+    void setBlockedLeavesAChatWithRemoteControlOffAlone() {
+      entityId = Optional.of("qits-614");
+      configurations =
+          AgentSurfaceConfigurations.of(
+              AgentConfigurationDocument.parse(
+                  "{\"version\":1,\"surfaces\":[{\"surface\":\"project.work\","
+                      + "\"harness\":\"CLAUDE\",\"permissionMode\":\"PROMPT\","
+                      + "\"remoteControl\":false}]}",
+                  "test"));
+      commands.spawnTransports = true;
+      AgentLaunchService service = service();
+      Command command = service.launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK));
+      commands.liveChats.add(command.id());
+
+      assertEquals(0, service.setBlocked(true), "no bridge, no list entry to rename");
+      assertTrue(commands.renames.isEmpty());
+    }
+
+    private AgentSurfaceConfigurations remoteControlOn() {
+      return AgentSurfaceConfigurations.of(
+          AgentConfigurationDocument.parse(
+              "{\"version\":1,\"surfaces\":[{\"surface\":\"project.work\",\"harness\":\"CLAUDE\","
+                  + "\"permissionMode\":\"PROMPT\",\"remoteControl\":true}]}",
+              "test"));
     }
 
     @Test

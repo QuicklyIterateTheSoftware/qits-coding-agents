@@ -187,6 +187,31 @@ class HarnessKnobsTest {
               "   ", AgentSurface.EPIC_AGENT, "refining/agent-configuration-system"),
           "a blank id is absent, so this falls back to the surface-and-branch shape");
     }
+
+    @Test
+    void aBlockedEntityLeadsWithTheMarkerWhicheverShapeFollows() {
+      // In front, because the list truncates the tail and a person scans it from the left.
+      assertEquals(
+          "\u2757 qits-614: ticket/some-slug",
+          AgentRemoteControl.sessionName(
+              "qits-614", AgentSurface.EPIC_AGENT, "ticket/some-slug", true));
+      assertEquals(
+          "\u2757 qits-614", AgentRemoteControl.sessionName("qits-614", "epic.agent", null, true));
+      assertEquals(
+          "\u2757 qits epic.agent refining/some-epic",
+          AgentRemoteControl.sessionName(null, AgentSurface.EPIC_AGENT, "refining/some-epic", true),
+          "a container that cannot name its entity is still marked");
+      assertEquals(
+          "qits-614: ticket/some-slug",
+          AgentRemoteControl.sessionName(
+              "qits-614", AgentSurface.EPIC_AGENT, "ticket/some-slug", false),
+          "unblocked drops it");
+      assertEquals(
+          AgentRemoteControl.sessionName("qits-614", AgentSurface.EPIC_AGENT, "b", false),
+          AgentRemoteControl.sessionName("qits-614", AgentSurface.EPIC_AGENT, "b"),
+          "the three-argument form is the unblocked one");
+      assertEquals("\u2757 ", AgentRemoteControl.BLOCKED_MARKER, "the marker and one space");
+    }
   }
 
   private static CodingAgent claude() {

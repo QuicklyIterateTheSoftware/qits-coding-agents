@@ -84,6 +84,34 @@ public final class AgentRemoteControl {
    * not know its branch yet is named by its surface alone rather than by nothing.
    */
   public static String sessionName(String entityId, String surfaceKey, String branch) {
+    return sessionName(entityId, surfaceKey, branch, false);
+  }
+
+  /**
+   * What a blocked entity's sessions are listed with in front of their name: {@code "❗ "}, the
+   * marker and one space.
+   *
+   * <p>In front because the claude.ai list truncates the tail of a name, and a person scanning it
+   * for "which of these needs me" reads from the left. A symbol rather than a word because a word
+   * would push the entity id — the handle the rest of the name exists to show — further into the
+   * part that gets cut.
+   */
+  public static final String BLOCKED_MARKER = "\u2757 ";
+
+  /**
+   * {@link #sessionName(String, String, String)}, led by {@link #BLOCKED_MARKER} when the entity the
+   * session works on is blocked: {@code ❗ qits-614: ticket/some-slug}. The marker goes in front of
+   * whichever shape the rest renders, the {@code qits <surface> <branch>} fallback included — a
+   * container that cannot name its entity can still have been told it is blocked, and the marker is
+   * the part of the name that asks for a person.
+   */
+  public static String sessionName(
+      String entityId, String surfaceKey, String branch, boolean blocked) {
+    String name = unmarkedName(entityId, surfaceKey, branch);
+    return blocked ? BLOCKED_MARKER + name : name;
+  }
+
+  private static String unmarkedName(String entityId, String surfaceKey, String branch) {
     String id = entityId == null ? "" : entityId.trim();
     if (!id.isBlank()) {
       return branch == null || branch.isBlank() ? id : id + ": " + branch;
@@ -94,6 +122,12 @@ public final class AgentRemoteControl {
 
   /** {@link #sessionName(String, String, String)} for a surface value. */
   public static String sessionName(String entityId, AgentSurface surface, String branch) {
-    return sessionName(entityId, surface == null ? null : surface.key(), branch);
+    return sessionName(entityId, surface, branch, false);
+  }
+
+  /** {@link #sessionName(String, String, String, boolean)} for a surface value. */
+  public static String sessionName(
+      String entityId, AgentSurface surface, String branch, boolean blocked) {
+    return sessionName(entityId, surface == null ? null : surface.key(), branch, blocked);
   }
 }

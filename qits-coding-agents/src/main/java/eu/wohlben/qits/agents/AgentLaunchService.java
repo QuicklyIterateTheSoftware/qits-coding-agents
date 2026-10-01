@@ -18,6 +18,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.regex.Pattern;
 
 /**
@@ -184,6 +186,30 @@ public final class AgentLaunchService {
   private final String taskPromptBootstrap;
 
   /**
+   * Whether the entity this container works on is BLOCKED, which puts {@link
+   * AgentRemoteControl#BLOCKED_MARKER} in front of every session name rendered from now on. Seeded
+   * from {@link AgentDefaults#entityBlocked()} and moved by {@link #setBlocked}.
+   */
+  private volatile boolean blocked;
+
+  /**
+   * The live Claude stream-json chats this service launched with Remote Control on, by command id, holding the surface key each was named for —
+   * the sessions {@link #setBlocked} can rename in place. Pruned lazily: an entry whose rename
+   * answers false has ended, and is dropped then.
+   */
+  private final ConcurrentMap<String, String> renameableChats = new ConcurrentHashMap<>();
+
+  /**
+   * Chats whose named transport has been created but whose launch has not returned yet, by command
+   * id, holding the blocked flag the name was rendered with. Two steps rather than one because the
+   * transport is created inside the spawn, before the commands layer has registered the chat: a
+   * {@link #setBlocked} that found it in {@link #renameableChats} then would get false from the
+   * rename and forget a session that is just starting. {@link #trackRenameable} promotes the entry
+   * once the chat is registered.
+   */
+  private final ConcurrentMap<String, Boolean> namedAtSpawn = new ConcurrentHashMap<>();
+
+  /**
    * @param claudeMount where the shared credential volume mounts. Agent launches point {@code HOME}
    *     here so the in-container {@code claude} reads the operator's one-time OAuth login off the
    *     volume instead of a per-session secret — the one credential that crosses into the sandbox.
@@ -241,6 +267,47 @@ public final class AgentLaunchService {
     this.hooksPort = hooksPort;
     this.taskPromptBootstrap =
         taskPromptBootstrap == null ? TASK_PROMPT_BOOTSTRAP : taskPromptBootstrap;
+    // Null-tolerant like the rest of this constructor: a test that exercises one rendering seam
+    // passes no defaults at all, and an absent seed is an unblocked one.
+    this.blocked = defaults != null && defaults.entityBlocked();
+  }
+
+  /**
+   * Marks the entity this container works on as blocked or unblocked, and renames the sessions that
+   * can be renamed in place to match; answers how many were.
+   *
+   * <p>The flag is stored first, so every launch from here on renders the new name whatever happens
+   * below. Then every live Claude chat this service started with Remote Control on is renamed over
+   * its own stdin ({@code /rename}, answered locally by the harness, no model call — see {@code
+   * StreamJsonChatProtocol.rename}); a chat whose rename answers false has ended and is forgotten.
+   *
+   * <p>Two kinds of session are deliberately left alone and pick the marker up at their next launch.
+   * A Kimi chat has no Remote Control and so no list entry to rename. An interactive session has a
+   * name but no channel to rename it on except keystrokes into its PTY, and keystrokes land wherever
+   * the cursor is — in the middle of a prompt the person is half-way through typing, or inside a
+   * dialog — which is worse than a stale marker.
+   *
+   * <p>Not synchronised against itself: two calls racing each other each rename with the flag they
+   * stored, and the last write to a session's stdin wins, which is also the flag left standing
+   * unless the two interleave exactly between store and rename. A host calls this from one event
+   * consumer, where that cannot happen.
+   */
+  public int setBlocked(boolean blocked) {
+    this.blocked = blocked;
+    int renamed = 0;
+    for (Map.Entry<String, String> chat : renameableChats.entrySet()) {
+      if (commands.chatRename(chat.getKey(), sessionName(chat.getValue()))) {
+        renamed++;
+      } else {
+        renameableChats.remove(chat.getKey(), chat.getValue());
+      }
+    }
+    return renamed;
+  }
+
+  /** Whether launches currently render the blocked marker. */
+  public boolean blocked() {
+    return blocked;
   }
 
   /** The bootstrap sentence this host seeds a {@code deliverTaskPrompt} launch with. */
@@ -310,6 +377,7 @@ public final class AgentLaunchService {
                 surface.key(),
                 rendered.record().toJson(),
                 rendered.redactions()));
+    trackRenameable(command.id(), surface);
     // The live transcript import: the durable head a mid-run re-attach replays from.
     transcriptTail.startTail(command.id(), type);
     // Both turns go over stdin, in order: a stream-json chat only speaks over stdin, so neither can
@@ -369,6 +437,7 @@ public final class AgentLaunchService {
                 AgentSurface.EPIC_AUTONOMOUS.key(),
                 rendered.record().toJson(),
                 rendered.redactions()));
+    trackRenameable(command.id(), AgentSurface.EPIC_AUTONOMOUS);
     transcriptTail.startTail(command.id(), type);
     // The bootstrap rides stdin as the first user turn (a chat only speaks over stdin); the agent
     // then pulls the real composed prompt back over MCP via taskPrompt. It is this surface's
@@ -748,14 +817,55 @@ public final class AgentLaunchService {
    */
   private ChatProtocolFactory claudeChatProtocol(
       PinnedSession pinned, AgentSurface surface, AgentSurfaceConfiguration configuration) {
-    String name =
-        configuration.remoteControl()
-            ? AgentRemoteControl.sessionName(
-                defaults.entityId().orElse(null),
-                surface,
-                checkout == null ? null : checkout.branch())
-            : null;
-    return process -> new StreamJsonChatProtocol(process, pinned.commandId(), name);
+    if (!configuration.remoteControl()) {
+      return process -> new StreamJsonChatProtocol(process, pinned.commandId(), null);
+    }
+    return process -> {
+      // Named at spawn rather than when the factory was built, with the flag it was named under
+      // noted for trackRenameable to compare against once the chat is registered.
+      boolean namedBlocked = blocked;
+      namedAtSpawn.put(pinned.commandId(), namedBlocked);
+      return new StreamJsonChatProtocol(
+          process, pinned.commandId(), sessionName(surface.key(), namedBlocked));
+    };
+  }
+
+  /**
+   * Makes a just-launched chat renameable by {@link #setBlocked}, if its transport was a named
+   * Claude one — a Kimi chat or one with Remote Control off left nothing in {@link #namedAtSpawn},
+   * and this is then a no-op.
+   *
+   * <p>The order closes the window between spawn and registration. The entry is published first and
+   * the flag re-read after: a {@code setBlocked} whose store came later iterates after the publish
+   * and renames the chat itself; one whose store came earlier is seen here, and the chat is renamed
+   * from here. Either way no session keeps a name rendered under a flag that has since moved.
+   */
+  private void trackRenameable(String commandId, AgentSurface surface) {
+    Boolean namedBlocked = namedAtSpawn.remove(commandId);
+    if (namedBlocked == null) {
+      return;
+    }
+    renameableChats.put(commandId, surface.key());
+    if (blocked != namedBlocked) {
+      commands.chatRename(commandId, sessionName(surface.key()));
+    }
+  }
+
+  /**
+   * The one place a session name is computed: this container's entity id, the surface, the checkout
+   * branch and whether the entity is blocked right now. The chat transport, the launch record and the
+   * interactive flag all ask here, so the name a launch records is the name it was given.
+   */
+  private String sessionName(String surfaceKey) {
+    return sessionName(surfaceKey, blocked);
+  }
+
+  private String sessionName(String surfaceKey, boolean blocked) {
+    return AgentRemoteControl.sessionName(
+        defaults.entityId().orElse(null),
+        surfaceKey,
+        checkout == null ? null : checkout.branch(),
+        blocked);
   }
 
   /**
@@ -965,10 +1075,7 @@ public final class AgentLaunchService {
     // nothing came of it.
     String remoteControlName =
         configuration.remoteControl() && agentType == AgentType.CLAUDE
-            ? AgentRemoteControl.sessionName(
-                defaults.entityId().orElse(null),
-                configuration.surface(),
-                checkout == null ? null : checkout.branch())
+            ? sessionName(configuration.surface())
             : "";
     return new AgentLaunchRecord(
         configuration.surface(),
@@ -1019,11 +1126,7 @@ public final class AgentLaunchService {
       configured.effort(configuration.effort());
     }
     if (interactive && configuration.remoteControl()) {
-      configured.remoteControl(
-          AgentRemoteControl.sessionName(
-              defaults.entityId().orElse(null),
-              configuration.surface(),
-              checkout == null ? null : checkout.branch()));
+      configured.remoteControl(sessionName(configuration.surface()));
     }
     return configured;
   }

@@ -157,6 +157,16 @@ public final class CommandRegistry {
     return true;
   }
 
+  /**
+   * Renames a running chat in its remote session list — see {@link ChatProtocol#rename}. False when
+   * the command is not a running chat (it ended, or never was one) or its transport cannot rename,
+   * which a caller holding a list of sessions to rename reads as "drop this one".
+   */
+  public boolean chatRename(String commandId, String name) {
+    ChatSession session = chats.get(commandId);
+    return session != null && session.rename(name);
+  }
+
   private CommandSession startSession(
       String commandId,
       String script,

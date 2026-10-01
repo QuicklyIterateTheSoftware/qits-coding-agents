@@ -55,6 +55,17 @@ public interface AgentCommands {
   boolean chatSend(String commandId, String text);
 
   /**
+   * Renames a running chat in its Remote Control session list, without a turn and without a model
+   * call; false when the command is no longer a running chat or its transport cannot rename.
+   *
+   * <p>A default answering {@code false} so a test double that predates it keeps compiling and
+   * reads, correctly, as a commands layer that renames nothing.
+   */
+  default boolean chatRename(String commandId, String name) {
+    return false;
+  }
+
+  /**
    * Types a turn into a running interactive session's PTY, followed by a carriage return, the way a
    * human at the terminal would.
    *

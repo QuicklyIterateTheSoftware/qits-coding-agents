@@ -24,6 +24,17 @@ public interface ChatProtocol {
   /** Delivers a user turn to the agent (and echoes it into the stream so the sender sees it). */
   void sendUser(String text);
 
+  /**
+   * Renames the session in whatever remote list it is shown in, without a model call and without
+   * putting a turn in the conversation; {@code false} when this transport has no such list entry to
+   * rename. The default answers {@code false}: Kimi's ACP transport has no Remote Control, and a
+   * transport that cannot rename must say so rather than pretend. {@link StreamJsonChatProtocol} is
+   * the one that can.
+   */
+  default boolean rename(String name) {
+    return false;
+  }
+
   /** Releases transport resources (close stdin, send any protocol-level cancel). Best-effort. */
   void close();
 }

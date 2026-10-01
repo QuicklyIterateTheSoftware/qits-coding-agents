@@ -59,6 +59,11 @@ public final class CommandsAgentCommands implements AgentCommands {
   }
 
   @Override
+  public boolean chatRename(String commandId, String name) {
+    return registry.chatRename(commandId, name);
+  }
+
+  @Override
   public boolean sendKeystrokes(String commandId, String text) {
     // A carriage return rather than a newline: that is what a terminal sends for Enter, and what the
     // attached xterm.js writes on the same channel.

@@ -112,6 +112,11 @@ final class ChatSession {
     protocol.sendUser(text);
   }
 
+  /** Renames the session through the transport; false when the transport cannot. */
+  boolean rename(String name) {
+    return protocol.rename(name);
+  }
+
   /**
    * Ring + broadcast a single JSON line of the unified conversation stream. Only failure {@code
    * result} events are captured to the log: they are absent from the harness transcript, and

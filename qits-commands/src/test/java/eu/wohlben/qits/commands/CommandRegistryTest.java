@@ -241,6 +241,10 @@ class CommandRegistryTest {
     assertFalse(registry.terminate("never-launched"));
     assertFalse(registry.input("never-launched", new byte[] {1}));
     assertFalse(registry.resize("never-launched", 80, 24));
+    assertFalse(registry.chatSend("never-launched", "hello"));
+    assertFalse(
+        registry.chatRename("never-launched", "\u2757 qits-614: b"),
+        "an unknown or ended chat answers false, which a renamer reads as drop it");
   }
 
   /**
