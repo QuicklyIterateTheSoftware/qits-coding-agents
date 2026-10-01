@@ -92,4 +92,19 @@ public interface AgentDefaults {
   default java.util.Map<String, String> ambientFacts() {
     return java.util.Map.of();
   }
+
+  /**
+   * The qualified id — {@code <project-slug>-<number>}, e.g. {@code qits-614} — of the ticket or
+   * epic the container this launch runs in was created for; empty when the container is about no
+   * single entity: the project desk, an ad-hoc workspace, the editor, or a container created before
+   * the host started injecting this.
+   *
+   * <p>Deliberately not a prompt-template fact: {@link AgentPromptTemplate#NAMES} is mirrored by hand
+   * in qits-projects-service's surface editor, and widening it is a separate, reviewed change this
+   * one does not make. A default method answering {@link Optional#empty()}, again because this is a
+   * released artifact that a host adopts at its own pace.
+   */
+  default Optional<String> entityId() {
+    return Optional.empty();
+  }
 }

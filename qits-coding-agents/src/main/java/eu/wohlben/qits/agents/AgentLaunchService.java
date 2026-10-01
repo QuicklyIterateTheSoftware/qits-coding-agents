@@ -750,7 +750,10 @@ public final class AgentLaunchService {
       PinnedSession pinned, AgentSurface surface, AgentSurfaceConfiguration configuration) {
     String name =
         configuration.remoteControl()
-            ? AgentRemoteControl.sessionName(surface, checkout == null ? null : checkout.branch())
+            ? AgentRemoteControl.sessionName(
+                defaults.entityId().orElse(null),
+                surface,
+                checkout == null ? null : checkout.branch())
             : null;
     return process -> new StreamJsonChatProtocol(process, pinned.commandId(), name);
   }
@@ -963,7 +966,9 @@ public final class AgentLaunchService {
     String remoteControlName =
         configuration.remoteControl() && agentType == AgentType.CLAUDE
             ? AgentRemoteControl.sessionName(
-                configuration.surface(), checkout == null ? null : checkout.branch())
+                defaults.entityId().orElse(null),
+                configuration.surface(),
+                checkout == null ? null : checkout.branch())
             : "";
     return new AgentLaunchRecord(
         configuration.surface(),
@@ -1016,7 +1021,9 @@ public final class AgentLaunchService {
     if (interactive && configuration.remoteControl()) {
       configured.remoteControl(
           AgentRemoteControl.sessionName(
-              configuration.surface(), checkout == null ? null : checkout.branch()));
+              defaults.entityId().orElse(null),
+              configuration.surface(),
+              checkout == null ? null : checkout.branch()));
     }
     return configured;
   }

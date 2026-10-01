@@ -150,15 +150,42 @@ class HarnessKnobsTest {
     @Test
     void theSessionNameSaysWhatTheSessionIsAndWhichWorkItIsIn() {
       // The auto-generated name is hostname-derived, so every session this platform starts would be
-      // indistinguishable in a session list whose whole job is telling sessions apart.
+      // indistinguishable in a session list whose whole job is telling sessions apart. No entity id
+      // known here, so this is today's shape unchanged.
       assertEquals(
           "qits epic.agent refining/agent-configuration-system",
           AgentRemoteControl.sessionName(
-              AgentSurface.EPIC_AGENT, "refining/agent-configuration-system"));
+              null, AgentSurface.EPIC_AGENT, "refining/agent-configuration-system"));
       assertEquals(
           "qits workspace.chat",
-          AgentRemoteControl.sessionName(AgentSurface.WORKSPACE_CHAT, "  "),
+          AgentRemoteControl.sessionName(null, AgentSurface.WORKSPACE_CHAT, "  "),
           "a container that does not know its branch is named by its surface, not by nothing");
+    }
+
+    @Test
+    void theEntityIdLeadsWhenOneIsKnown() {
+      // The qualified id is the handle a person already uses for this work everywhere else, so it
+      // leads over the surface key, which is identical across every session this platform dispatches.
+      assertEquals(
+          "qits-614: ticket/agent-session-names-should-read-entity-id-branch",
+          AgentRemoteControl.sessionName(
+              "qits-614",
+              AgentSurface.EPIC_AGENT,
+              "ticket/agent-session-names-should-read-entity-id-branch"),
+          "id and branch");
+      assertEquals(
+          "qits-614",
+          AgentRemoteControl.sessionName("qits-614", AgentSurface.EPIC_AGENT, null),
+          "id, no branch");
+      assertEquals(
+          "qits-614",
+          AgentRemoteControl.sessionName("qits-614", AgentSurface.EPIC_AGENT, "   "),
+          "id with a blank branch is the id alone, same as no branch");
+      assertEquals(
+          "qits epic.agent refining/agent-configuration-system",
+          AgentRemoteControl.sessionName(
+              "   ", AgentSurface.EPIC_AGENT, "refining/agent-configuration-system"),
+          "a blank id is absent, so this falls back to the surface-and-branch shape");
     }
   }
 

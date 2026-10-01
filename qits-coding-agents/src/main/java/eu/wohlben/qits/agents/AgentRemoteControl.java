@@ -24,9 +24,12 @@ import java.util.Map;
  *
  * <p><b>The name is worth passing.</b> Left to itself the harness derives the session name from the
  * hostname, so every session this platform starts would be indistinguishable in the claude.ai
- * session list — a list whose whole job is telling sessions apart. The surface says what the session
- * is for and the branch says which piece of work it is in, which is the pair a reader of that list
- * needs.
+ * session list — a list whose whole job is telling sessions apart. The qualified entity id leads
+ * when one is known, because it is the handle a person already uses for the same work everywhere
+ * else — MCP tools, comments, {@code qits work} — and because the claude.ai list truncates the tail
+ * of a long name, where a surface key is identical across every session this platform ever
+ * dispatches. The surface-and-branch shape stays as the fallback for a container that cannot answer
+ * which ticket or epic it is for.
  */
 public final class AgentRemoteControl {
 
@@ -68,20 +71,29 @@ public final class AgentRemoteControl {
   }
 
   /**
-   * The name a session is listed under: what it is for, and which piece of work it is in.
+   * The name a session is listed under: the qualified entity id it runs for, when one is known,
+   * else what it is for and which piece of work it is in.
    *
-   * <p>{@code qits} leads because that list is not this platform's — it holds whatever else the
-   * operator's account is running — and the surface key and the branch are the two facts that tell
-   * one platform session from another. A container that does not know its branch yet is named by its
-   * surface alone rather than by nothing.
+   * <p>Blank counts as absent for every argument, including a trimmed {@code entityId}. With an id
+   * and a branch the name is {@code "<entityId>: <branch>"} — {@code qits-614: ticket/some-slug} —
+   * because the id is the handle a person already uses for this work, and the branch after the colon
+   * says which piece of it this session is in. With an id and no branch the name is the id alone. With
+   * no id this falls back to today's shape: {@code qits} leads because that list is not this
+   * platform's — it holds whatever else the operator's account is running — and the surface key and
+   * the branch are the two facts that tell one platform session from another. A container that does
+   * not know its branch yet is named by its surface alone rather than by nothing.
    */
-  public static String sessionName(String surfaceKey, String branch) {
+  public static String sessionName(String entityId, String surfaceKey, String branch) {
+    String id = entityId == null ? "" : entityId.trim();
+    if (!id.isBlank()) {
+      return branch == null || branch.isBlank() ? id : id + ": " + branch;
+    }
     String key = surfaceKey == null || surfaceKey.isBlank() ? "session" : surfaceKey;
     return branch == null || branch.isBlank() ? "qits " + key : "qits " + key + " " + branch;
   }
 
-  /** {@link #sessionName(String, String)} for a surface value. */
-  public static String sessionName(AgentSurface surface, String branch) {
-    return sessionName(surface == null ? null : surface.key(), branch);
+  /** {@link #sessionName(String, String, String)} for a surface value. */
+  public static String sessionName(String entityId, AgentSurface surface, String branch) {
+    return sessionName(entityId, surface == null ? null : surface.key(), branch);
   }
 }

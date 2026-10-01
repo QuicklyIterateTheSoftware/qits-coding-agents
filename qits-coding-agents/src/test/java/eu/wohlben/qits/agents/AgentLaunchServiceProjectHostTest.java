@@ -87,6 +87,9 @@ class AgentLaunchServiceProjectHostTest {
   /** What this container knows about itself, for an initial prompt's placeholders. */
   private Map<String, String> ambientFacts;
 
+  /** The qualified ticket or epic id this container was created for, or empty for most tests. */
+  private Optional<String> entityId;
+
   @BeforeEach
   void setUp() {
     commands = new Commands();
@@ -95,6 +98,7 @@ class AgentLaunchServiceProjectHostTest {
     activityTracking = true;
     configurations = AgentSurfaceConfigurations.shipped();
     ambientFacts = Map.of("project", "qits", "repository", REPO);
+    entityId = Optional.empty();
   }
 
   // --- fakes ------------------------------------------------------------------------------------
@@ -284,6 +288,11 @@ class AgentLaunchServiceProjectHostTest {
           @Override
           public Map<String, String> ambientFacts() {
             return ambientFacts;
+          }
+
+          @Override
+          public Optional<String> entityId() {
+            return entityId;
           }
         };
     CommandStore store = new CommandStore();
@@ -1515,6 +1524,24 @@ class AgentLaunchServiceProjectHostTest {
           "repository", record.getJsonArray("mcpServers").getJsonObject(0).getString("server"));
       assertFalse(record.getJsonArray("mcpServers").getJsonObject(0).getBoolean("readOnly"));
       assertEquals(0, record.getJsonArray("externalMcpServers").size());
+    }
+
+    @Test
+    void theRemoteControlNameLeadsWithTheEntityIdWhenTheContainerKnowsOne() {
+      // A container created for a ticket answers entityId(), and the recorded name is the id a person
+      // already uses for this work everywhere else, not the surface key.
+      entityId = Optional.of("qits-614");
+      configurations =
+          AgentSurfaceConfigurations.of(
+              AgentConfigurationDocument.parse(
+                  "{\"version\":1,\"surfaces\":[{\"surface\":\"project.work\",\"harness\":\"CLAUDE\","
+                      + "\"permissionMode\":\"PROMPT\",\"remoteControl\":true}]}",
+                  "test"));
+
+      Command command = service().launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK));
+      JsonObject record = new JsonObject(command.agentLaunchRecord());
+
+      assertEquals("qits-614: main", record.getString("remoteControlName"));
     }
 
     @Test
