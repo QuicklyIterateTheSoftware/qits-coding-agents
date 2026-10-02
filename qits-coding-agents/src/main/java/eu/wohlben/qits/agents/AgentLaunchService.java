@@ -1218,6 +1218,15 @@ public final class AgentLaunchService {
         agent.mcpServer(server.key(), McpServers.httpMcp(server.url()));
       }
     }
+    // The host's in-container servers (a browser, say), after the url servers. Claude only: Kimi's
+    // ACP session has no place for a stdio command. Pre-approved like the qits server, because a
+    // prompting surface should not stop on its first call to a tool the image ships for it.
+    if (agentType == AgentType.CLAUDE) {
+      for (LocalMcp server : mcpServers.localServers()) {
+        agent.mcpServer(server.key(), McpServers.stdioMcp(server.command()));
+        agent.allowedTools(server.allowedTools());
+      }
+    }
     // The catalog's servers, after the platform's own: the key order is deliberate, because both
     // harnesses interpolate the serialized object into a shell argument the suites assert literally.
     // Their pre-approval lists DO render, because an external server is the first case where the
@@ -1282,6 +1291,11 @@ public final class AgentLaunchService {
       servers.add(
           new AgentLaunchRecord.AttachedServer(
               server.key(), server.url().contains("agentReadOnly=true")));
+    }
+    if (agentType == AgentType.CLAUDE) {
+      for (LocalMcp server : mcpServers.localServers()) {
+        servers.add(new AgentLaunchRecord.AttachedServer(server.key(), false));
+      }
     }
     // Claude only: Kimi has no remote-control mechanism, so a Kimi session asked for no bridge and
     // records no name — the knob it was configured with is still recorded, and the note says why

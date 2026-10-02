@@ -231,4 +231,12 @@ final class WorkspaceHostMcpServers implements AgentMcpServers {
                   REPOSITORY_TOOLS));
     };
   }
+
+  /** The browser the workspace image ships, as the daemon attaches it: every tool pre-approved. */
+  static final LocalMcp BROWSER = new LocalMcp("browser", "qits-browser-mcp", List.of("mcp__browser__*"));
+
+  @Override
+  public List<LocalMcp> localServers() {
+    return List.of(BROWSER);
+  }
 }

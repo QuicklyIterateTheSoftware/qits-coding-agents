@@ -529,6 +529,33 @@ class AgentLaunchServiceWorkspaceHostTest {
     }
 
     @Test
+    void aClaudeLaunchStartsTheImagesBrowserAndPreApprovesIt() {
+      AgentLaunchService service = service();
+      AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
+
+      for (LaunchSpec spec :
+          List.of(
+              service.renderChat(
+                  AgentMcpScope.REPOSITORY, AgentSurface.PROJECT_WORK, pinned, AgentType.CLAUDE),
+              service.renderAutonomousChat(
+                  AgentMcpScope.ACTIONS, AgentSurface.PROJECT_WORK, pinned, AgentType.CLAUDE))) {
+        assertTrue(
+            spec.script().contains("\"browser\":{\"type\":\"stdio\",\"command\":\"qits-browser-mcp\"}"),
+            spec.script());
+        assertTrue(spec.script().contains("--allowedTools 'mcp__browser__*'"), spec.script());
+      }
+    }
+
+    @Test
+    void theBrowserIsInTheLaunchRecord() {
+      service().launchChat(chat(AgentMcpScope.REPOSITORY));
+
+      assertTrue(
+          commands.last().agent().launchRecord().contains("{\"server\":\"browser\",\"readOnly\":false}"),
+          commands.last().agent().launchRecord());
+    }
+
+    @Test
     void kimiTakesNoHomeOverlay() {
       AgentLaunchService service = service();
       AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.KIMI);
@@ -942,6 +969,20 @@ class AgentLaunchServiceWorkspaceHostTest {
       assertFalse(server.enabledTools().contains("mcp__repository__taskPrompt"));
       assertEquals("observability", config.mcpServers().get(1).name());
       assertTrue(config.mcpServers().get(1).enabledTools().contains("telemetryErrors"));
+    }
+
+    @Test
+    void kimiAttachesNoBrowserBecauseItsSessionCarriesNoStdioServer() {
+      AgentLaunchService service = service();
+      AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.KIMI);
+
+      AcpSessionConfig config =
+          service.buildAcpSessionConfig(
+              AgentMcpScope.REPOSITORY, AgentSurface.WORKSPACE_CHAT, pinned);
+
+      assertFalse(
+          config.mcpServers().stream().anyMatch(server -> server.name().equals("browser")),
+          config.mcpServers().toString());
     }
 
     @Test

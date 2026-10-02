@@ -67,4 +67,13 @@ public final class McpServers {
   public static JsonObject httpMcpWithHeadersHelper(String url, String command) {
     return httpMcp(url).put("headersHelper", command);
   }
+
+  /**
+   * The config for a stdio MCP server the agent starts itself: {@code
+   * {"type":"stdio","command":"<command>"}}. The command must already be a plain program name (see
+   * {@link LocalMcp}); it is interpolated into a shell argument like every other config.
+   */
+  public static JsonObject stdioMcp(String command) {
+    return new JsonObject().put("type", "stdio").put("command", command);
+  }
 }

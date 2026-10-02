@@ -97,4 +97,16 @@ public interface AgentMcpServers {
   default boolean honoursNarrowing() {
     return false;
   }
+
+  /**
+   * The servers that run inside the agent's own container, attached to every launch after the
+   * {@link #serversFor} servers. Empty by default, so a host that does not override this renders
+   * exactly what it rendered before.
+   *
+   * <p>Claude only: Kimi's ACP session carries url servers alone, so a Kimi launch attaches none of
+   * these.
+   */
+  default List<LocalMcp> localServers() {
+    return List.of();
+  }
 }
