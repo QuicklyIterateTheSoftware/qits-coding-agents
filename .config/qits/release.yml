@@ -34,5 +34,5 @@
 # half and for the day a platform artifact does arrive.
 archetype: maven-library
 artifacts:
-  - { type: maven, name: "eu.wohlben.qits:qits-commands", sbom: qits-commands/target/sbom.json }
-  - { type: maven, name: "eu.wohlben.qits:qits-coding-agents", sbom: qits-coding-agents/target/sbom.json }
+  - { type: maven, name: "eu.wohlben.qits:qits-commands", path: qits-commands, sbom: qits-commands/target/sbom.json }
+  - { type: maven, name: "eu.wohlben.qits:qits-coding-agents", path: qits-coding-agents, sbom: qits-coding-agents/target/sbom.json, link: [qits-commands] }
