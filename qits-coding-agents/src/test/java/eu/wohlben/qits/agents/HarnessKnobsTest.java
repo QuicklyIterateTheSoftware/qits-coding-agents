@@ -204,7 +204,7 @@ class HarnessKnobsTest {
 
     @Test
     void thePaletteHasOneSquarePerStatus() {
-      // The twin of the UI's STATUS_TONES: grey, purple, blue, blue, blue, yellow, green, grey.
+      // The twin of the UI's STATUS_TONES: grey, purple, blue, blue, blue, check mark, green, grey.
       Map<String, String> expected =
           Map.of(
               "REPORTED", "\u2B1C",
@@ -212,7 +212,7 @@ class HarnessKnobsTest {
               "IMPLEMENTING", "\uD83D\uDFE6",
               "IMPLEMENTED", "\uD83D\uDFE6",
               "VERIFYING", "\uD83D\uDFE6",
-              "VERIFIED", "\uD83D\uDFE8",
+              "VERIFIED", "\u2705",
               "DONE", "\uD83D\uDFE9",
               "DROPPED", "\u2B1C");
       expected.forEach(
@@ -223,7 +223,7 @@ class HarnessKnobsTest {
                       "qits-1", facts("T", status, false), "workspace.agent", "b"),
                   status));
       assertEquals(
-          List.of(0x2B1C, 0x1F7EA, 0x1F7E6, 0x1F7E6, 0x1F7E6, 0x1F7E8, 0x1F7E9, 0x2B1C),
+          List.of(0x2B1C, 0x1F7EA, 0x1F7E6, 0x1F7E6, 0x1F7E6, 0x2705, 0x1F7E9, 0x2B1C),
           java.util.Arrays.stream(EntityStatusSquare.values())
               .map(value -> value.square().codePointAt(0))
               .toList(),
@@ -246,6 +246,11 @@ class HarnessKnobsTest {
               null, facts(null, null, true), AgentSurface.EPIC_AGENT, "refining/some-epic"),
           "a container that cannot name its entity is still marked");
       assertEquals("\u2757 ", AgentRemoteControl.BLOCKED_MARKER, "the marker and one space");
+      assertEquals(
+          "\u2757\u2705 qits-1 T",
+          AgentRemoteControl.sessionName(
+              "qits-1", facts("T", "VERIFIED", true), "workspace.agent", "b"),
+          "the blocked marker sits in front of VERIFIED's check mark like any other square");
     }
 
     @Test

@@ -1788,9 +1788,9 @@ class AgentLaunchServiceProjectHostTest {
 
       assertEquals(1, service.setEntity(new EntityFacts("Session names, renamed", "VERIFIED", false)));
       assertEquals(
-          List.of(command.id() + " \uD83D\uDFE8 qits-614 Session names, renamed"), commands.renames);
+          List.of(command.id() + " ✅ qits-614 Session names, renamed"), commands.renames);
       assertEquals(
-          "\uD83D\uDFE8 qits-614 Session names, renamed",
+          "✅ qits-614 Session names, renamed",
           new JsonObject(
                   service.launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK))
                       .agentLaunchRecord())
@@ -1842,7 +1842,7 @@ class AgentLaunchServiceProjectHostTest {
 
     // --- live rename of interactive sessions (qits-617) ---
 
-    private static final String VERIFIED_NAME = "\uD83D\uDFE8 qits-614 Session names";
+    private static final String VERIFIED_NAME = "✅ qits-614 Session names";
 
     private static final EntityFacts VERIFIED = new EntityFacts("Session names", "VERIFIED", false);
 
