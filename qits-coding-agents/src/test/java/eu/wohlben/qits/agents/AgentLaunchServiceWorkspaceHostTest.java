@@ -410,13 +410,15 @@ class AgentLaunchServiceWorkspaceHostTest {
 
     @Test
     void theTaskMarkerWriteIsPreApprovedButThePlanEditsAreNot() {
-      // mark_task_implemented is a pre-approved write for one caller: the epic dispatch, whose first
-      // turn tells the agent to mark each task implemented as it lands. It records a fact about work
-      // the agent itself did and moves a marker, not a plan — so the tools that would change the
-      // plan stay out and remain a prompted act for Claude, unreachable for kimi.
+      // mark_task_implemented and mark_task_implementing are pre-approved writes for one caller: the
+      // epic dispatch, whose first turn tells the agent to mark each task implementing as it starts
+      // and implemented as it lands. They record a fact about work the agent itself did and move a
+      // marker, not a plan — so the tools that would change the plan stay out and remain a prompted
+      // act for Claude, unreachable for kimi.
       for (AgentMcpScope scope : AgentMcpScope.values()) {
         List<String> tools = repositoryServer(MCP_SERVERS.serversFor(scope)).allowedTools();
         assertTrue(tools.contains("mcp__repository__mark_task_implemented"), scope.name());
+        assertTrue(tools.contains("mcp__repository__mark_task_implementing"), scope.name());
         assertFalse(tools.contains("mcp__repository__add_task"), scope.name());
         assertFalse(tools.contains("mcp__repository__update_task"), scope.name());
         assertFalse(tools.contains("mcp__repository__remove_task"), scope.name());
@@ -1011,8 +1013,8 @@ class AgentLaunchServiceWorkspaceHostTest {
     @Test
     void theEpicReadsAndTheTaskMarkerRideKimisHardEnabledToolsSetButThePlanEditsDoNot() {
       // Same asymmetry for the epic dispatch: a name left out of enabledTools does not exist, so a
-      // dispatched kimi run told to read its epic and mark tasks implemented needs all three here,
-      // while the plan-changing tools stay absent and so stay out of reach.
+      // dispatched kimi run told to read its epic and mark tasks implementing/implemented needs all
+      // four here, while the plan-changing tools stay absent and so stay out of reach.
       AgentLaunchService service = service();
 
       AcpSessionConfig config =
@@ -1023,6 +1025,7 @@ class AgentLaunchServiceWorkspaceHostTest {
       assertTrue(enabled.contains("list_epics"), enabled.toString());
       assertTrue(enabled.contains("get_epic"), enabled.toString());
       assertTrue(enabled.contains("mark_task_implemented"), enabled.toString());
+      assertTrue(enabled.contains("mark_task_implementing"), enabled.toString());
       assertFalse(enabled.contains("update_epic"), enabled.toString());
       assertFalse(enabled.contains("add_task"), enabled.toString());
       assertFalse(enabled.contains("update_task"), enabled.toString());

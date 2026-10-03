@@ -115,28 +115,29 @@ final class WorkspaceHostMcpServers implements AgentMcpServers {
       List.of("mcp__repository__transition_ticket");
 
   /**
-   * {@code mark_task_implemented} — the third named exception, and like the second it exists because
-   * of one caller.
+   * {@code mark_task_implemented} and {@code mark_task_implementing} — the third named exception, and
+   * like the second it exists because of one caller.
    *
    * <p>qits-projects' "Start implementation" stands a workspace on {@code epic/<slug>} and dispatches
    * an agent into it, and the first turn it composes ({@code EpicDispatchController.instruction})
-   * tells that agent to mark each task implemented as the work lands. Nothing else asks a workspace
-   * agent to touch an epic's tasks, and on the kimi path {@code enabledTools} is the session's whole
-   * tool surface, so an unlisted tool is a dead letter rather than a prompt.
+   * tells that agent to mark each task implementing as it starts and implemented as the work lands.
+   * Nothing else asks a workspace agent to touch an epic's tasks, and on the kimi path {@code
+   * enabledTools} is the session's whole tool surface, so an unlisted tool is a dead letter rather
+   * than a prompt.
    *
    * <p>What makes pre-approving a <em>write</em> acceptable here is narrow and worth stating. It
    * records a fact about work the agent itself just did, so the agent is the authority on it rather
    * than a party guessing at somebody else's state. qits-projects accepts it only while the owning
    * epic is in IMPLEMENTATION ({@code EpicLifecycle.requireImplementation}), so it is reachable
    * exactly during the dispatch it was added for. And it changes a <em>marker</em>, not a plan: by
-   * then the epic's scope is frozen, and this tool cannot add, remove or reword a feature or a task
-   * — only say that one of them landed.
+   * then the epic's scope is frozen, and neither tool can add, remove or reword a feature or a task
+   * — only say that one of them started or landed.
    *
    * <p>It is an interim. qits-projects' own note on the tool says merge-derived markers are the
    * intended answer, and when they arrive this bucket goes with the prompt-driven step.
    */
   static final List<String> TASK_IMPLEMENTATION_TOOLS =
-      List.of("mcp__repository__mark_task_implemented");
+      List.of("mcp__repository__mark_task_implemented", "mcp__repository__mark_task_implementing");
 
   /**
    * The repository server's full pre-approval: its reads, plus the two ticket exceptions and the
