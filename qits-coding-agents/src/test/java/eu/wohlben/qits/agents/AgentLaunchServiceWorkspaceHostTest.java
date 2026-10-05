@@ -1258,4 +1258,152 @@ class AgentLaunchServiceWorkspaceHostTest {
               .script());
     }
   }
+
+  // --- fixed platform headers from the host (qits-625) -----------------------------------------
+
+  /**
+   * A RUNNER workspace reaches every platform service through the edge, so its host hands the
+   * library a fixed {@code Authorization} header on each platform server. Everything above runs on a
+   * host with none, and renders exactly what it did before the headers existed.
+   */
+  @Nested
+  class FixedPlatformHeaders {
+
+    private static final Map<String, String> BEARER = Map.of("Authorization", "Bearer t");
+
+    private AgentMcpServers runnerHost(Map<String, String> headers) {
+      return new WorkspaceHostMcpServers(ENDPOINTS, REPO, WORKSPACE, headers);
+    }
+
+    private String claudeScript(AgentMcpServers servers, AgentMcpScope scope) {
+      AgentLaunchService service = serviceWith(servers);
+      return service
+          .renderChat(
+              scope,
+              AgentSurface.WORKSPACE_CHAT,
+              service.pinSession(null, false, AgentType.CLAUDE),
+              AgentType.CLAUDE)
+          .script();
+    }
+
+    @Test
+    void claudesQitsEntryCarriesTheHeaderInsteadOfTheHelperAndIsStillPreApproved() {
+      String script = claudeScript(runnerHost(BEARER), AgentMcpScope.REPOSITORY);
+
+      assertTrue(
+          script.contains(
+              "\"qits\":{\"type\":\"http\",\"url\":\""
+                  + WorkspaceHostMcpServers.PLATFORM_URL
+                  + "\",\"headers\":{\"Authorization\":\"Bearer t\"}}"),
+          script);
+      assertFalse(script.contains("headersHelper"), script);
+      assertTrue(script.contains("--allowedTools 'mcp__qits__*"), script);
+    }
+
+    @Test
+    void theRepositoryAndObservabilityEntriesCarryTheHeaderAndActionsDoesNot() {
+      String script = claudeScript(runnerHost(BEARER), AgentMcpScope.ACTIONS);
+
+      assertTrue(
+          script.contains(
+              "\"repository\":{\"type\":\"http\",\"url\":\"http://qits:8080/projects/mcp?projectId="
+                  + PROJECT
+                  + "&repositoryId="
+                  + REPO
+                  + "&workspaceId="
+                  + WORKSPACE
+                  + "\",\"headers\":{\"Authorization\":\"Bearer t\"}}"),
+          script);
+      assertTrue(
+          script.contains(
+              "\"observability\":{\"type\":\"http\",\"url\":\"http://qits:8080/observability/mcp?repositoryId="
+                  + REPO
+                  + "&workspaceId="
+                  + WORKSPACE
+                  + "\",\"headers\":{\"Authorization\":\"Bearer t\"}}"),
+          script);
+      assertTrue(
+          script.contains(
+              "\"actions\":{\"type\":\"http\",\"url\":\"http://qits:8080/actions/mcp?repositoryId="
+                  + REPO
+                  + "\"}"),
+          "the actions server is not a platform service and carries no header: " + script);
+    }
+
+    @Test
+    void anEmptyHeaderMapRendersExactlyWhatAHostWithoutHeadersRenders() {
+      for (AgentMcpScope scope : AgentMcpScope.values()) {
+        assertEquals(
+            claudeScript(MCP_SERVERS, scope).replaceAll("[0-9a-f-]{36}", "<id>"),
+            claudeScript(runnerHost(Map.of()), scope).replaceAll("[0-9a-f-]{36}", "<id>"),
+            scope.toString());
+      }
+    }
+
+    @Test
+    void theHeaderKeyOrderIsSortedNotTheMapsIterationOrder() {
+      // Map.copyOf's iteration order is salted per JVM, and the rendered command line is asserted
+      // as a literal — so the keys render sorted whatever order the host built them in.
+      Map<String, String> reversed = new java.util.LinkedHashMap<>();
+      reversed.put("X-Qits-Trace", "on");
+      reversed.put("Authorization", "Bearer t");
+
+      String script = claudeScript(runnerHost(reversed), AgentMcpScope.REPOSITORY);
+
+      assertTrue(
+          script.contains("\"headers\":{\"Authorization\":\"Bearer t\",\"X-Qits-Trace\":\"on\"}"),
+          script);
+      assertFalse(script.contains("\"X-Qits-Trace\":\"on\",\"Authorization\""), script);
+    }
+
+    @Test
+    void theBearerIsHandedOverForRedactionRatherThanStored() {
+      serviceWith(runnerHost(BEARER)).launchChat(chat(AgentMcpScope.REPOSITORY));
+      AgentLaunchMetadata metadata = commands.last().agent();
+
+      assertEquals(List.of("Bearer t"), metadata.redactions());
+      assertFalse(metadata.redact(commands.last().script()).contains("Bearer t"));
+      assertTrue(commands.last().script().contains("Bearer t"), "the script that RUNS is intact");
+    }
+
+    @Test
+    void kimisSessionNewCarriesTheHeadersAndTheQitsServer() {
+      AgentLaunchService service = serviceWith(runnerHost(BEARER));
+
+      AcpSessionConfig config =
+          service.buildAcpSessionConfig(
+              AgentMcpScope.REPOSITORY,
+              AgentSurface.WORKSPACE_CHAT,
+              service.pinSession(null, false, AgentType.KIMI));
+
+      assertEquals(
+          List.of("repository", "observability", "qits"),
+          config.mcpServers().stream().map(AcpSessionConfig.AcpMcpServer::name).toList());
+      config.mcpServers().forEach(server -> assertEquals(BEARER, server.headers(), server.name()));
+      assertEquals(WorkspaceHostMcpServers.PLATFORM_URL, config.mcpServers().get(2).url());
+    }
+
+    @Test
+    void kimiLeavesTheQitsServerOutWhenItHasNoHeaders() {
+      // Kimi has no headers helper: without a fixed header the central server could only answer
+      // 401, so it is not attached at all — the DIRECT host's Kimi session is what it was.
+      AgentMcpServers directHostWithQits =
+          scope ->
+              List.of(
+                  new ScopedMcp("repository", "http://qits:8080/projects/mcp?projectId=" + PROJECT, List.of()),
+                  new ScopedMcp("qits", WorkspaceHostMcpServers.PLATFORM_URL, List.of()));
+      AgentLaunchService service = serviceWith(directHostWithQits);
+
+      AcpSessionConfig config =
+          service.buildAcpSessionConfig(
+              AgentMcpScope.PROJECT,
+              AgentSurface.WORKSPACE_CHAT,
+              service.pinSession(null, false, AgentType.KIMI));
+
+      assertEquals(
+          List.of("repository"),
+          config.mcpServers().stream().map(AcpSessionConfig.AcpMcpServer::name).toList());
+      assertTrue(config.mcpServers().get(0).headers().isEmpty());
+    }
+  }
 }

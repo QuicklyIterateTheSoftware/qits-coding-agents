@@ -191,8 +191,12 @@ public final class AgentLaunchService {
    * The headers helper Claude runs at connect for {@link #QITS_MCP_KEY} — see {@link
    * McpServers#httpMcpWithHeadersHelper}. Interim (qits-630), owner 2026-10-01: a container's
    * commissioned-client bearer lasts one hour, so a header written once at launch would go stale
-   * mid-session; this command is re-run on every connect instead. Follow-up qits-684 replaces it
-   * with a runner-issued, non-expiring token and this constant retires with it.
+   * mid-session; this command is re-run on every connect instead.
+   *
+   * <p>Still used for hosts that supply no headers — DIRECT workspaces, and the projects daemon. A
+   * host that hands the {@code qits} server fixed {@link ScopedMcp#headers()} (a RUNNER workspace's
+   * non-expiring runner-issued token, qits-684) gets those rendered instead and no helper
+   * (qits-625); this constant retires once no host is left without them.
    */
   static final String QITS_HEADERS_HELPER_COMMAND = "qits mcp-credential";
 
@@ -1085,11 +1089,17 @@ public final class AgentLaunchService {
     List<AcpSessionConfig.AcpMcpServer> servers = new ArrayList<>();
     List<ScopedMcp> attached = attachedServers(scope, configuration, readOnly);
     for (ScopedMcp server : attached) {
+      // The central qits server only with fixed headers (qits-625): Kimi has no headers helper, so
+      // without a header the server would only ever answer 401 — a dead tool, not a missing one.
+      if (QITS_MCP_KEY.equals(server.key()) && server.headers().isEmpty()) {
+        continue;
+      }
       servers.add(
           new AcpSessionConfig.AcpMcpServer(
               server.key(),
               server.url(),
-              KimiCodeAgent.stripServerPrefix(server.key(), server.allowedTools())));
+              KimiCodeAgent.stripServerPrefix(server.key(), server.allowedTools()),
+              server.headers()));
     }
     // Kimi carries servers protocol-native on session/new — (key, url, tools) and now headers — so
     // an external catalog server rides here rather than through a config file, which is also why the
@@ -1197,14 +1207,17 @@ public final class AgentLaunchService {
       // lists reach a session through the per-server channels instead — Kimi's enabledTools on the
       // ACP session. Adding them here would move a rendered command line this epic promised not to
       // move.
-      // TWO exceptions for the central `qits` platform server (qits-630, owner-decided), Claude only
-      // — Kimi is out of scope, only Claude's MCP config is wired per the epic:
+      // TWO exceptions for the central `qits` platform server (qits-630, owner-decided), Claude
+      // only — Kimi gets this server only with fixed headers (qits-625), see buildAcpSessionConfig:
       if (agentType == AgentType.CLAUDE && QITS_MCP_KEY.equals(server.key())) {
-        // it carries a headers helper rather than a plain url, so Claude fetches a fresh bearer at
-        // every connect instead of the launch baking in one that outlives an hour;
+        // it carries the host's fixed headers when there are any (a RUNNER workspace's non-expiring
+        // token, qits-625), and otherwise a headers helper rather than a plain url, so Claude fetches
+        // a fresh bearer at every connect instead of the launch baking in one that outlives an hour;
         agent.mcpServer(
             server.key(),
-            McpServers.httpMcpWithHeadersHelper(server.url(), QITS_HEADERS_HELPER_COMMAND));
+            server.headers().isEmpty()
+                ? McpServers.httpMcpWithHeadersHelper(server.url(), QITS_HEADERS_HELPER_COMMAND)
+                : McpServers.httpMcp(server.url(), server.headers()));
         // and it is pre-approved on every surface, skip-permissions or not — the bearer on each call
         // is the session's own credential, so the server can already refuse anything the caller may
         // not do, and a surface that prompts should not stop a session on its first qits tool call.
@@ -1215,7 +1228,8 @@ public final class AgentLaunchService {
         // moot), and the built-ins' lists reach a session through the per-server channels instead —
         // Kimi's enabledTools on the ACP session. Adding them here would move a rendered command line
         // this epic promised not to move.
-        agent.mcpServer(server.key(), McpServers.httpMcp(server.url()));
+        // Fixed headers from the host, when it supplies any (qits-625); none renders as before.
+        agent.mcpServer(server.key(), McpServers.httpMcp(server.url(), server.headers()));
       }
     }
     // The host's in-container servers (a browser, say), after the url servers. Claude only: Kimi's
@@ -1248,11 +1262,15 @@ public final class AgentLaunchService {
     return new Rendered(
         spec,
         launchRecord(configuration, agentType, rendered, attached, interactive),
-        // The header values this render just interpolated into the script. The command is stored
-        // with them replaced; the process is spawned with the script as rendered.
-        externalServers(configuration, attached).stream()
-            .filter(AgentExternalMcpServer::hasCredential)
-            .map(AgentExternalMcpServer::headerValue)
+        // The header values this render just interpolated into the script — the host's fixed
+        // headers on its own servers and the catalog's credentials. The command is stored with them
+        // replaced; the process is spawned with the script as rendered.
+        java.util.stream.Stream.concat(
+                attached.stream().flatMap(server -> server.headers().values().stream()),
+                externalServers(configuration, attached).stream()
+                    .filter(AgentExternalMcpServer::hasCredential)
+                    .map(AgentExternalMcpServer::headerValue))
+            .distinct()
             .toList());
   }
 
@@ -1469,7 +1487,8 @@ public final class AgentLaunchService {
               server.url(),
               attachment.allowedTools().isEmpty()
                   ? server.allowedTools()
-                  : attachment.allowedTools());
+                  : attachment.allowedTools(),
+              server.headers());
       attached.add(unattended || attachment.readOnly() ? markReadOnly(resolved) : resolved);
     }
     return List.copyOf(attached);
@@ -1526,7 +1545,8 @@ public final class AgentLaunchService {
   private static ScopedMcp markReadOnly(ScopedMcp server) {
     return QITS_MCP_KEY.equals(server.key())
         ? server
-        : new ScopedMcp(server.key(), readOnlyMarked(server.url()), server.allowedTools());
+        : new ScopedMcp(
+            server.key(), readOnlyMarked(server.url()), server.allowedTools(), server.headers());
   }
 
   /**

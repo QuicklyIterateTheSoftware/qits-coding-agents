@@ -351,10 +351,12 @@ public final class AcpChatProtocol implements ChatProtocol {
         node.put("enabledTools", new JsonArray(server.enabledTools()));
       }
       if (!server.headers().isEmpty()) {
-        // An external catalog server's credential. Last, and only when there is one, so a platform
-        // server's node is byte for byte what it was before external servers existed.
+        // An external catalog server's credential, or the host's fixed headers on a platform server
+        // (qits-625). Last, and only when there are any, so a server without them renders byte for
+        // byte what it did before either existed.
         JsonObject headers = new JsonObject();
-        server.headers().forEach(headers::put);
+        // Sorted by name: headers is a Map.copyOf, whose iteration order is salted per JVM.
+        new java.util.TreeMap<>(server.headers()).forEach(headers::put);
         node.put("headers", headers);
       }
       servers.add(node);

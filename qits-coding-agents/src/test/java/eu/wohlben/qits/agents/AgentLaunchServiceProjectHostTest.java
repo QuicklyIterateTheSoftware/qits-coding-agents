@@ -1661,6 +1661,79 @@ class AgentLaunchServiceProjectHostTest {
           "every other built-in still gets marked: " + script);
     }
 
+    private AgentMcpServers withQitsAndABearer() {
+      Map<String, String> bearer = Map.of("Authorization", "Bearer t");
+      return scope ->
+          List.of(
+              new ScopedMcp(
+                  "repository",
+                  "http://qits:8080/projects/mcp?projectId=" + PROJECT,
+                  List.of(),
+                  bearer),
+              new ScopedMcp(
+                  "qits", "http://dev-qits-platform-access-mcp-service:8080/mcp", List.of(), bearer));
+    }
+
+    @Test
+    void fixedHeadersFromTheHostReplaceTheHeadersHelperAndKeepThePreApproval() {
+      // qits-625: a host whose agent reaches the platform through the edge hands every platform
+      // server a fixed, non-expiring bearer. On the qits key that replaces the helper outright —
+      // two credential sources on one entry would leave which one Claude sends to chance.
+      AgentLaunchService service = serviceWith(withQitsAndABearer());
+      AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
+
+      String script =
+          service
+              .renderAutonomousChat(
+                  AgentMcpScope.PROJECT, AgentSurface.EPIC_AUTONOMOUS, pinned, AgentType.CLAUDE)
+              .script();
+
+      assertTrue(
+          script.contains(
+              "\"qits\":{\"type\":\"http\",\"url\":\"http://dev-qits-platform-access-mcp-service:8080/mcp\","
+                  + "\"headers\":{\"Authorization\":\"Bearer t\"}}"),
+          script);
+      assertFalse(script.contains("headersHelper"), script);
+      assertTrue(script.contains("--allowedTools 'mcp__qits__*'"), script);
+      assertTrue(
+          script.contains(
+              "\"repository\":{\"type\":\"http\",\"url\":\"http://qits:8080/projects/mcp?projectId="
+                  + PROJECT
+                  + "&agentReadOnly=true\",\"headers\":{\"Authorization\":\"Bearer t\"}}"),
+          "the read-only marking keeps the header: " + script);
+    }
+
+    @Test
+    void kimiGetsTheQitsServerOnlyWithFixedHeaders() {
+      AgentLaunchService withHeaders = serviceWith(withQitsAndABearer());
+      AgentLaunchService withoutHeaders = serviceWith(withQits());
+
+      List<String> attached =
+          withHeaders
+              .buildAcpSessionConfig(
+                  AgentMcpScope.PROJECT,
+                  AgentSurface.PROJECT_WORK,
+                  withHeaders.pinSession(null, false, AgentType.KIMI))
+              .mcpServers()
+              .stream()
+              .map(server -> server.name() + "=" + server.headers())
+              .toList();
+      List<String> withoutAttached =
+          withoutHeaders
+              .buildAcpSessionConfig(
+                  AgentMcpScope.PROJECT,
+                  AgentSurface.PROJECT_WORK,
+                  withoutHeaders.pinSession(null, false, AgentType.KIMI))
+              .mcpServers()
+              .stream()
+              .map(server -> server.name())
+              .toList();
+
+      assertEquals(
+          List.of("repository={Authorization=Bearer t}", "qits={Authorization=Bearer t}"), attached);
+      assertEquals(List.of("repository"), withoutAttached);
+    }
+
     @Test
     void aSurfaceWithNoQitsServerRendersNoAllowedTools() {
       // MCP_SERVERS (the projects daemon's real mapping, below) does not attach qits yet — that is

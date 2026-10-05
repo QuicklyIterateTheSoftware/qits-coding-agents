@@ -1,6 +1,7 @@
 package eu.wohlben.qits.agents;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * Which MCP servers a scope attaches, how each is narrowed, and what is pre-approved on it —
@@ -108,5 +109,20 @@ public interface AgentMcpServers {
    */
   default List<LocalMcp> localServers() {
     return List.of();
+  }
+
+  /**
+   * Headers the host wants on every <b>platform</b> server it attaches — on a RUNNER workspace,
+   * {@code Authorization: Bearer <QITS_TOKEN>}, because the agent reaches every platform service
+   * through the edge and the edge wants a credential on each call (qits-625). Empty by default, so a
+   * host that does not override this renders exactly what it rendered before.
+   *
+   * <p>The host attaches these itself, to the {@link ScopedMcp#headers()} of the servers it builds in
+   * {@link #serversFor} and {@link #serverFor}; the library renders whatever headers a server carries
+   * and does not read this method to add them. They are never attached to a catalog (external)
+   * server: that is somebody else's service, and the platform's bearer must not be sent to it.
+   */
+  default Map<String, String> platformHeaders() {
+    return Map.of();
   }
 }

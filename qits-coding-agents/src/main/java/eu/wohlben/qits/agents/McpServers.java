@@ -46,8 +46,10 @@ public final class McpServers {
     if (headers == null || headers.isEmpty()) {
       return config;
     }
+    // Sorted by name: a caller's map may be a Map.copyOf, whose iteration order is salted per JVM,
+    // and this object is interpolated into a command line the suites assert as a literal.
     JsonObject rendered = new JsonObject();
-    headers.forEach(rendered::put);
+    new java.util.TreeMap<>(headers).forEach(rendered::put);
     return config.put("headers", rendered);
   }
 

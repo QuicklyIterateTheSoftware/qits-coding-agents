@@ -1,6 +1,7 @@
 package eu.wohlben.qits.agents;
 
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Stream;
 
 /**
@@ -180,14 +181,38 @@ final class WorkspaceHostMcpServers implements AgentMcpServers {
           "mcp__observability__telemetrySearchLogs",
           "mcp__observability__telemetryMetrics");
 
+  /** Where the central {@code qits} platform server is, on a host that attaches it (qits-625). */
+  static final String PLATFORM_URL = "http://dev-qits-platform-access-mcp-service:8080/mcp";
+
   private final McpEndpoints endpoints;
   private final String repoId;
   private final String workspaceId;
+  private final Map<String, String> platformHeaders;
 
   WorkspaceHostMcpServers(McpEndpoints endpoints, String repoId, String workspaceId) {
+    this(endpoints, repoId, workspaceId, Map.of());
+  }
+
+  /**
+   * A RUNNER workspace's host (qits-625): {@code platformHeaders} ride on the repository,
+   * observability and {@code qits} servers — never on {@code actions}, which is not a platform
+   * service — and the {@code qits} server is attached only when there are headers, so the
+   * no-header host above renders exactly what it rendered before.
+   */
+  WorkspaceHostMcpServers(
+      McpEndpoints endpoints,
+      String repoId,
+      String workspaceId,
+      Map<String, String> platformHeaders) {
     this.endpoints = endpoints;
     this.repoId = repoId;
     this.workspaceId = workspaceId;
+    this.platformHeaders = Map.copyOf(platformHeaders);
+  }
+
+  @Override
+  public Map<String, String> platformHeaders() {
+    return platformHeaders;
   }
 
   @Override
@@ -206,7 +231,8 @@ final class WorkspaceHostMcpServers implements AgentMcpServers {
                 + repo
                 + "&workspaceId="
                 + workspaceId,
-            REPOSITORY_TOOLS);
+            REPOSITORY_TOOLS,
+            platformHeaders);
     // Telemetry is bucketed per workspace, and qits-observability's tool filter hides the tools
     // outright unless both narrowings are present — so this server is only worth listing where they
     // are, and carries exactly the two scopes that service reads (no projectId: it has no notion of
@@ -219,8 +245,13 @@ final class WorkspaceHostMcpServers implements AgentMcpServers {
                 + repo
                 + "&workspaceId="
                 + workspaceId,
-            READ_ONLY_OBSERVABILITY_TOOLS);
-    return switch (scope) {
+            READ_ONLY_OBSERVABILITY_TOOLS,
+            platformHeaders);
+    List<ScopedMcp> platform =
+        platformHeaders.isEmpty()
+            ? List.of()
+            : List.of(new ScopedMcp("qits", PLATFORM_URL, List.of(), platformHeaders));
+    List<ScopedMcp> hosted = switch (scope) {
       case ACTIONS ->
           // The "configure this repository" session: the actions server for the action library,
           // plus the (narrowed) repository server for the repository reads (branches, workspaces,
@@ -242,8 +273,10 @@ final class WorkspaceHostMcpServers implements AgentMcpServers {
               new ScopedMcp(
                   "repository",
                   endpoints.mcpUrl("repository") + "?projectId=" + projectId,
-                  REPOSITORY_TOOLS));
+                  REPOSITORY_TOOLS,
+                  platformHeaders));
     };
+    return Stream.concat(hosted.stream(), platform.stream()).toList();
   }
 
   /** The browser the workspace image ships, as the daemon attaches it: every tool pre-approved. */
