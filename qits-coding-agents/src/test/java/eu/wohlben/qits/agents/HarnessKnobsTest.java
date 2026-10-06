@@ -204,11 +204,13 @@ class HarnessKnobsTest {
 
     @Test
     void thePaletteHasOneSquarePerStatus() {
-      // The twin of the UI's STATUS_TONES: grey, purple, blue, blue, blue, check mark, green, grey.
+      // The twin of the UI's STATUS_TONES: grey, purple, purple, blue, blue, blue, check mark,
+      // green, grey.
       Map<String, String> expected =
           Map.of(
               "REPORTED", "\u2B1C",
               "REFINED", "\uD83D\uDFEA",
+              "READY_FOR_DEV", "\uD83D\uDFEA",
               "IMPLEMENTING", "\uD83D\uDFE6",
               "IMPLEMENTED", "\uD83D\uDFE6",
               "VERIFYING", "\uD83D\uDFE6",
@@ -223,11 +225,16 @@ class HarnessKnobsTest {
                       "qits-1", facts("T", status, false), "workspace.agent", "b"),
                   status));
       assertEquals(
-          List.of(0x2B1C, 0x1F7EA, 0x1F7E6, 0x1F7E6, 0x1F7E6, 0x2705, 0x1F7E9, 0x2B1C),
+          List.of(
+              0x2B1C, 0x1F7EA, 0x1F7EA, 0x1F7E6, 0x1F7E6, 0x1F7E6, 0x2705, 0x1F7E9, 0x2B1C),
           java.util.Arrays.stream(EntityStatusSquare.values())
               .map(value -> value.square().codePointAt(0))
               .toList(),
           "the code points, spelled out, so a mistyped surrogate pair cannot hide");
+      assertEquals(
+          "🟪",
+          EntityStatusSquare.of("READY_FOR_DEV").orElseThrow().square(),
+          "READY_FOR_DEV is REFINED's twin square, not blocking");
       assertTrue(EntityStatusSquare.of("ARCHIVED").isEmpty(), "an unknown word has no square");
       assertTrue(EntityStatusSquare.of("  ").isEmpty());
       assertTrue(EntityStatusSquare.of(null).isEmpty());

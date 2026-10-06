@@ -13,8 +13,9 @@ package eu.wohlben.qits.agents;
  *
  * @param title the entity's title as the host stores it, or null/blank when unknown. Raw: the name
  *     sanitises it, so a host passes what it has rather than guessing what a PTY can take
- * @param status the entity's status word — {@code REPORTED}, {@code REFINED}, {@code IMPLEMENTED},
- *     {@code VERIFIED}, {@code DONE}, {@code DROPPED} — or null/blank when unknown. A word this
+ * @param status the entity's status word — {@code REPORTED}, {@code REFINED}, {@code
+ *     READY_FOR_DEV}, {@code IMPLEMENTED}, {@code VERIFIED}, {@code DONE}, {@code DROPPED} — or
+ *     null/blank when unknown. A word this
  *     library does not know renders no square rather than failing; see {@link EntityStatusSquare}
  * @param blocked whether the entity is BLOCKED
  */

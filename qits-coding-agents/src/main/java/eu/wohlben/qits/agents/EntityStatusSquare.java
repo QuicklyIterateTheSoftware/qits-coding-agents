@@ -10,7 +10,9 @@ import java.util.Optional;
  *
  * <p><b>Its twin is the UI's, except VERIFIED.</b> qits-projects-frontend {@code
  * src/app/project/entities-model.ts} {@code STATUS_TONES} badges REPORTED {@code neutral} (grey),
- * REFINED {@code highlight} (purple), IMPLEMENTING {@code info} (blue), IMPLEMENTED {@code info}
+ * REFINED {@code highlight} (purple), READY_FOR_DEV {@code highlight} (purple, same tone as
+ * REFINED — ticket qits-887 makes it a human-approved wait between REFINED and IMPLEMENTING rather
+ * than a different kind of thing), IMPLEMENTING {@code info} (blue), IMPLEMENTED {@code info}
  * (blue, the same tone — IMPLEMENTING leads straight into it rather than being a different kind of
  * thing), VERIFYING {@code info} (blue, same reasoning as IMPLEMENTING — it is the platform's own
  * verify dispatch rather than a different kind of thing), DONE {@code success} (green), DROPPED
@@ -30,6 +32,7 @@ import java.util.Optional;
 public enum EntityStatusSquare {
   REPORTED("⬜"),
   REFINED("🟪"),
+  READY_FOR_DEV("🟪"),
   IMPLEMENTING("🟦"),
   IMPLEMENTED("🟦"),
   VERIFYING("🟦"),

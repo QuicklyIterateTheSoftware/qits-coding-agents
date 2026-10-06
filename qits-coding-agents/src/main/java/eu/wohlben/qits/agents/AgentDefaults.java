@@ -141,8 +141,9 @@ public interface AgentDefaults {
 
   /**
    * The status word of the entity {@link #entityId()} names when this container booted — {@code
-   * REPORTED}, {@code REFINED}, {@code IMPLEMENTED}, {@code VERIFIED}, {@code DONE} or {@code
-   * DROPPED} — which picks the session name's square ({@link EntityStatusSquare}); empty when
+   * REPORTED}, {@code REFINED}, {@code READY_FOR_DEV}, {@code IMPLEMENTED}, {@code VERIFIED},
+   * {@code DONE} or {@code DROPPED} — which picks the session name's square ({@link
+   * EntityStatusSquare}); empty when
    * unknown, and the name then carries no square. The workspace daemon reads it from {@code
    * QITS_WORKSPACE_DAEMON_ENTITY_STATUS}. Only the seed; a transition arrives through {@code
    * AgentLaunchService.setEntity}. A default answering {@link Optional#empty()}, for the
