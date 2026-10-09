@@ -49,10 +49,8 @@ import java.util.regex.Pattern;
  *   <li>{@code QitsHostResolver} is gone — the daemon dialled qits, so it knows the address;
  *   <li>{@code WorkspacePromptDraftService} is gone — there is no draft store here, so the request
  *       carries the prompt and {@code deliverTaskPrompt} is taken at its word;
- *   <li>{@code ServiceEventSpool} is gone, deliberately: chats used to open seeded with the service
- *       events that fired while nothing was listening. {@code ServiceSupervisor} is in this repo but
- *       has no spool, and building one is a feature rather than part of a move. Recorded as an open
- *       item;
+ *   <li>{@code ServiceEventSpool} is gone, along with the workspace services it spooled events for
+ *       (qits-947): chats no longer open seeded with service events;
  *   <li>{@code SettingsService} becomes {@link AgentDefaults};
  *   <li>the three {@code QuarkusTransaction.requiringNew()} wrappers are gone with the database.
  * </ul>
