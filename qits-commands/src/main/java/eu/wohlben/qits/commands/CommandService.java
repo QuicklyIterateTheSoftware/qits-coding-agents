@@ -19,11 +19,9 @@ import java.util.Map;
  * <p>Five public methods are gone, not moved: {@code launchService}, {@code beginServiceRun},
  * {@code followService}, {@code launchAndAwait} and {@code launchScriptAndAwait}.
  * migration-plan.md §3.3 listed them as dead code to drop — residue of the pre-daemon host-exec
- * service supervisor — and §3.3 is emphatic about actually dropping them, because the last
- * extraction left that list in place and an imported socket promptly called back into it, turning
- * host-side service supervision back on after it had been deliberately moved into the daemon. They
- * had no production callers, only tests. Services are {@code ServiceSupervisor}'s, in the daemon
- * module, and stay that way.
+ * path — and §3.3 is emphatic about actually dropping them, because the last extraction left that
+ * list in place and an imported socket promptly called back into it. They had no production
+ * callers, only tests.
  */
 public final class CommandService {
 
