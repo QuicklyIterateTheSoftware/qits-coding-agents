@@ -68,7 +68,8 @@ public interface AgentCommands {
 
   /**
    * Types a turn into a running interactive session's PTY, followed by a carriage return, the way a
-   * human at the terminal would.
+   * human at the terminal would. The turn's newlines are typed as a literal {@code \n}, so it is one
+   * line and one turn ({@link TerminalTurns}).
    *
    * <p>An interactive launch has no stdin channel of its own: the REPL owns the terminal, so a turn
    * after the argv seed is keystrokes and nothing else. It is used for exactly one thing — the
@@ -76,6 +77,7 @@ public interface AgentCommands {
    * settled is the failure shape rather than the normal one — and it inherits that shape's race: a
    * TUI that is still starting may not have a prompt to type into yet. That is a reason not to send
    * a second opening turn, not a reason to buffer one; see {@code AgentLaunchService.openingTurns}.
+   * A host may still hold the write until the session has started, as the workspace daemon does.
    */
   boolean sendKeystrokes(String commandId, String text);
 

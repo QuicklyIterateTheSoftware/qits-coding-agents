@@ -555,7 +555,7 @@ public final class AgentLaunchService {
             spec.environment(),
             pinned.commandId(),
             pinned.ref(),
-            chatTranscriptSweep(),
+            liveTranscriptSweep(),
             protocolFactory,
             new AgentLaunchMetadata(
                 type.name(),
@@ -615,7 +615,7 @@ public final class AgentLaunchService {
             spec.environment(),
             pinned.commandId(),
             pinned.ref(),
-            chatTranscriptSweep(),
+            liveTranscriptSweep(),
             protocolFactory,
             new AgentLaunchMetadata(
                 type.name(),
@@ -637,9 +637,9 @@ public final class AgentLaunchService {
    * Launches the full interactive agent TUI (the plain {@code claude} or {@code kimi} REPL in
    * xterm.js, kind {@code TERMINAL}) as a first-class agent session: same MCP scope servers,
    * credential overlay and skip-permissions as chat, plus a session id and the session-report hook —
-   * so the run is resumable, forkable (Claude only), and its transcript is imported on exit like any
-   * chat. The PTY byte stream stays terminal-only; the structured conversation comes from the
-   * transcript.
+   * so the run is resumable, forkable (Claude only), and its transcript is imported live and on exit
+   * like any chat. The PTY byte stream stays terminal-only; the structured conversation comes from
+   * the transcript.
    */
   public Command launchInteractive(AgentLaunchRequest request) {
     // As in launchChat: the surface is required, and a request without one is refused before any
@@ -669,7 +669,7 @@ public final class AgentLaunchService {
       tracked = new InteractiveName(surface.key(), rendersAs);
       renameableInteractive.put(pinned.commandId(), tracked);
     }
-    CommandExitListener sweep = transcriptSweep();
+    CommandExitListener sweep = liveTranscriptSweep();
     Command command;
     try {
       command =
@@ -696,6 +696,9 @@ public final class AgentLaunchService {
     if (tracked != null) {
       retarget(pinned.commandId(), tracked);
     }
+    // The live transcript import, as for a chat: the PTY is for the person at the terminal, and the
+    // transcript is what the host's session log and conversation view read while the run is live.
+    transcriptTail.startTail(command.id(), type);
     for (String turn : turns.subList(Math.min(1, turns.size()), turns.size())) {
       commands.sendKeystrokes(command.id(), turn);
     }
@@ -972,18 +975,12 @@ public final class AgentLaunchService {
     return "http://127.0.0.1:" + hooksPort + "/hooks/claude-code?commandId=" + commandId;
   }
 
-  /** The post-exit transcript import, composed onto the registry exit listener at spawn. */
-  private CommandExitListener transcriptSweep() {
-    // onCommandExit swallows its own failures, so the sweep can never break exit handling.
-    return (commandId, exitCode, terminatedManually) -> transcripts.onCommandExit(commandId);
-  }
-
   /**
-   * The chat exit chain: stop the live tail first (so no tail write can race the sweep), then the
-   * reconciling sweep, which waits for the harness's JSONL flush to catch up with what the tail
-   * already imported before its delete-and-reimport.
+   * The exit chain of a chat and of an interactive session: stop the live tail first (so no tail
+   * write can race the sweep), then the reconciling sweep, which waits for the harness's JSONL flush
+   * to catch up with what the tail already imported before its delete-and-reimport.
    */
-  private CommandExitListener chatTranscriptSweep() {
+  private CommandExitListener liveTranscriptSweep() {
     return (commandId, exitCode, terminatedManually) -> {
       long importedLive = transcriptTail.stopAndDrain(commandId);
       transcripts.onChatExit(commandId, importedLive);

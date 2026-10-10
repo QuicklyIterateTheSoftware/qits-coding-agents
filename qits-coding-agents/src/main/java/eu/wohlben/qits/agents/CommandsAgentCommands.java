@@ -67,8 +67,9 @@ public final class CommandsAgentCommands implements AgentCommands {
   @Override
   public boolean sendKeystrokes(String commandId, String text) {
     // A carriage return rather than a newline: that is what a terminal sends for Enter, and what the
-    // attached xterm.js writes on the same channel.
-    return registry.input(commandId, (text + "\r").getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    // attached xterm.js writes on the same channel. The turn's own newlines become literal "\n", so
+    // it stays one turn (TerminalTurns).
+    return registry.input(commandId, TerminalTurns.keystrokes(text));
   }
 
   @Override
@@ -78,8 +79,7 @@ public final class CommandsAgentCommands implements AgentCommands {
 
   @Override
   public GuardedInput sendKeystrokesUnlessDraft(String commandId, String text) {
-    return registry.inputUnlessDraft(
-        commandId, (text + "\r").getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    return registry.inputUnlessDraft(commandId, TerminalTurns.keystrokes(text));
   }
 
   @Override

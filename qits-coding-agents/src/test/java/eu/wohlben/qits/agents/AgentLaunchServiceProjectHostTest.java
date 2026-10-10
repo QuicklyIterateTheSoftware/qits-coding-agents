@@ -337,6 +337,9 @@ class AgentLaunchServiceProjectHostTest {
     return new ProjectHostMcpServers(ENDPOINTS, repoName);
   }
 
+  /** The live transcript tail of the last {@link #serviceWith} service. */
+  private AgentTranscriptTailService tail;
+
   private AgentLaunchService serviceWithRepo(String repoName) {
     return serviceWith(serversWithRepo(repoName));
   }
@@ -404,11 +407,12 @@ class AgentLaunchServiceProjectHostTest {
             new AgentSessionStore(),
             workspaceRoot.toString(),
             null);
+    tail = new AgentTranscriptTailService(transcripts, new CommandLogService(store, null));
     return new AgentLaunchService(
         commands,
         new AgentAuthStatus(probe, CLAUDE_MOUNT, workspaceRoot),
         transcripts,
-        new AgentTranscriptTailService(transcripts, new CommandLogService(store, null)),
+        tail,
         defaults,
         mcpServers,
         CHECKOUT_CONTEXT,
@@ -1209,6 +1213,26 @@ class AgentLaunchServiceProjectHostTest {
 
       assertTrue(commands.last().script().startsWith("exec claude 'do the thing'"));
       assertTrue(commands.keystrokes.isEmpty(), "one turn is one turn, on argv, as before");
+    }
+
+    @Test
+    void anInteractiveLaunchTailsItsTranscriptLiveLikeAChat() {
+      // The host's session log and conversation view read the transcript while the run is live; the
+      // PTY stream is only for the person at the terminal.
+      Command command =
+          service()
+              .launch(
+                  new AgentLaunchRequest(
+                      AgentMcpScope.PROJECT,
+                      AgentSurface.PROJECT_WORK,
+                      AgentLaunchMode.INTERACTIVE,
+                      "do the thing",
+                      null,
+                      false,
+                      false,
+                      null));
+
+      assertTrue(tail.tailing(command.id()));
     }
 
     @Test

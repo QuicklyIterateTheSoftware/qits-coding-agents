@@ -27,10 +27,10 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Live counterpart of {@link AgentTranscriptService}'s exit sweep: while a chat runs, polls its
- * main-session transcript JSONL off the shared claude volume and appends each new complete line to
- * the command's log buffer on {@link LogChannel#TRANSCRIPT} — so a mid-run re-attach can serve the
- * durable head of the conversation. Main session only; sidechains and stats stay exit-sweep
+ * Live counterpart of {@link AgentTranscriptService}'s exit sweep: while a chat or an interactive
+ * session runs, polls its main-session transcript JSONL off the shared claude volume and appends
+ * each new complete line to the command's log buffer on {@link LogChannel#TRANSCRIPT} — so a
+ * mid-run re-attach can serve the durable head of the conversation. Main session only; sidechains and stats stay exit-sweep
  * territory, and the exit sweep's delete-and-reimport reconciles whatever the tail did.
  *
  * <p>Poll-based (no {@code WatchService}), with a partial line buffered across polls until its
@@ -144,6 +144,11 @@ public final class AgentTranscriptTailService implements AutoCloseable {
     }
     tail.pollSafely();
     return tail.importedLines;
+  }
+
+  /** Whether the command has a live tail; for tests. */
+  boolean tailing(String commandId) {
+    return tails.containsKey(commandId);
   }
 
   /** Run one poll synchronously — deterministic drive for tests. */
