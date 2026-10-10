@@ -47,10 +47,12 @@ Since qits-1174 agents get **one** platform MCP server, `qits` — the central p
 server, scoped by the caller's own bearer — plus whatever runs inside the container (the workspace
 image's browser). The per-service servers `repository`, `observability` and `actions` are retired.
 `AgentMcpScope`, `AgentMcpNarrowing`, `AgentMcpIds` and `McpEndpoints` remain only so hosts built
-against older versions still compile; the first two still sit on the launch wire.
+against older versions still compile; `AgentMcpScope` still sits on the launch wire.
 
-`AgentLaunchService` renders whatever the host hands it: it attaches each server and strips the
-`mcp__<key>__` prefix for Kimi. Both hosts are reproduced as fixtures in this repository's test
+`AgentLaunchService` renders whatever the host hands it: it attaches each server, read-only marks
+the URLs (`agentReadOnly=true`) for an autonomous run or a `readOnly` attachment, and strips the
+`mcp__<key>__` prefix for Kimi. The fence lives in the central `qits` server: with the marker it
+lists and runs only commands marked as reads, and fails closed. Both hosts are reproduced as fixtures in this repository's test
 scope (`ProjectHostMcpServers`, `WorkspaceHostMcpServers`) so their rendered commands stay asserted
 **here**, where the harness lives.
 
@@ -97,8 +99,8 @@ The **document** says which platform servers attach, in which order, with which 
 serve **refuses the launch** — a session missing a server it was configured with looks normal and
 cannot do its job — with two exceptions that are skipped and noted on the launch record instead: a
 retired server (`AgentConfigurationDocument.RETIRED_SERVER_KEYS`), which stored surfaces still name
-until qits-projects cleans them up, and `qits` on a host with no address for it. The attachment's
-`narrow*` and `readOnly` flags are still read but change nothing.
+until qits-projects cleans them up, and `qits` on a host with no address for it. Skipping removes
+access and grants none. The attachment's `narrow*` flags are still read but change nothing.
 
 Beside the platform's own server, a surface can attach **external MCP servers** from the
 catalog qits-projects holds. They arrive in the document fully rendered — url and header value
@@ -122,7 +124,7 @@ literally. Three rules travel with them:
   stdio command.
 
 Each launch **records what it ran with** on the command — surface, harness, model, effort, permission
-mode, remote control, activity tracking, the attached servers, and whatever the
+mode, remote control, activity tracking, the attached servers with their fences, and whatever the
 harness could not render. That is what makes "a container keeps the document it was born with, and an
 edit applies to the next container" a safe rule rather than an opaque one: the store can be edited at
 any time, so a session that behaved oddly last week is unreadable off anything else.

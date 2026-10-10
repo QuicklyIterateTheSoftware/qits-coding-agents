@@ -324,6 +324,21 @@ class AgentLaunchServiceWorkspaceHostTest {
     }
 
     @Test
+    void anAutonomousRunMarksEveryUrlServerReadOnly() {
+      AgentLaunchService service = service();
+      AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
+
+      LaunchSpec spec =
+          service.renderAutonomousChat(
+              AgentMcpScope.ACTIONS, AgentSurface.PROJECT_WORK, pinned, AgentType.CLAUDE);
+
+      assertEquals(
+          1,
+          spec.script().split("agentReadOnly=true", -1).length - 1,
+          "the qits server is fenced; the in-container browser takes no url");
+    }
+
+    @Test
     void anInteractiveLaunchEmbedsTheSeedAndRendersTheRepl() {
       AgentLaunchService service = service();
       AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
@@ -820,7 +835,7 @@ class AgentLaunchServiceWorkspaceHostTest {
 
     /** The one platform server every surface of this host attaches. */
     private static SeededConfigurationDocument withQits(
-        SeededConfigurationDocument document, AgentSurface surface) {
+        SeededConfigurationDocument document, AgentSurface surface, boolean readOnly) {
       return document.surface(
           surface,
           // Remote control as the store seeds it: on for every chat-shaped surface, off for the two
@@ -829,7 +844,7 @@ class AgentLaunchServiceWorkspaceHostTest {
           // is the one the flag was made for, never passed it.
           AgentSurfaceConfigurations.shippedRemoteControl(surface),
           "",
-          SeededConfigurationDocument.server("qits", false, false, false, false, List.of()));
+          SeededConfigurationDocument.server("qits", false, false, false, readOnly, List.of()));
     }
 
     private AgentSurfaceConfigurations seeded() {
@@ -840,9 +855,9 @@ class AgentLaunchServiceWorkspaceHostTest {
               AgentSurface.EPIC_AGENT,
               AgentSurface.WORKSPACE_CHAT,
               AgentSurface.WORKSPACE_AGENT)) {
-        withQits(document, surface);
+        withQits(document, surface, false);
       }
-      withQits(document, AgentSurface.TICKET_DISPATCH);
+      withQits(document, AgentSurface.TICKET_DISPATCH, true);
       return document.configurations();
     }
 
@@ -920,6 +935,24 @@ class AgentLaunchServiceWorkspaceHostTest {
       assertTrue(
           script.contains("Sonnet for mechanical, narrow, well-specified edits"),
           "the model-choice rule is the part a dispatch cannot be told later");
+    }
+
+    @Test
+    void aDispatchedRunIsFencedByItsConfigurationRatherThanOnlyByItsShape() {
+      // ticket.dispatch is seeded read-only, so the fence renders from the row too, whichever call
+      // site a dispatch goes through.
+      AgentLaunchService service = service();
+      AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
+
+      configurations = seeded();
+      String script =
+          service
+              .renderChat(
+                  AgentMcpScope.REPOSITORY, AgentSurface.TICKET_DISPATCH, pinned, AgentType.CLAUDE)
+              .script();
+
+      assertTrue(
+          script.contains(WorkspaceHostMcpServers.PLATFORM_URL + "?agentReadOnly=true"), script);
     }
 
     @Test

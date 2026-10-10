@@ -595,7 +595,7 @@ public final class AgentLaunchService {
                 new AcpChatProtocol(
                     process,
                     buildAcpSessionConfig(
-                        AgentMcpScope.REPOSITORY, AgentSurface.EPIC_AUTONOMOUS, pinned))
+                        AgentMcpScope.REPOSITORY, AgentSurface.EPIC_AUTONOMOUS, pinned, true))
             : claudeChatProtocol(
                 pinned,
                 AgentSurface.EPIC_AUTONOMOUS,
@@ -999,7 +999,7 @@ public final class AgentLaunchService {
   /** {@link #renderChat} with the launch record beside it. */
   Rendered renderedChat(
       AgentMcpScope scope, AgentSurface surface, PinnedSession pinned, AgentType agentType) {
-    return render(scope, surface, pinned, agentType, false, null);
+    return render(scope, surface, pinned, agentType, false, false, null);
   }
 
   /**
@@ -1071,9 +1071,19 @@ public final class AgentLaunchService {
    */
   AcpSessionConfig buildAcpSessionConfig(
       AgentMcpScope scope, AgentSurface surface, PinnedSession pinned) {
+    return buildAcpSessionConfig(scope, surface, pinned, false);
+  }
+
+  /**
+   * {@link #buildAcpSessionConfig} with the autonomous read-only marking: {@code readOnly} appends
+   * the {@code agentReadOnly} marker to each server URL — the ACP counterpart of {@link
+   * #renderAutonomousChat}'s URL marking. See {@link #markReadOnly}.
+   */
+  AcpSessionConfig buildAcpSessionConfig(
+      AgentMcpScope scope, AgentSurface surface, PinnedSession pinned, boolean readOnly) {
     AgentSurfaceConfiguration configuration = configurationFor(surface);
     List<AcpSessionConfig.AcpMcpServer> servers = new ArrayList<>();
-    List<ScopedMcp> attached = attachedServers(scope, configuration).servers();
+    List<ScopedMcp> attached = attachedServers(scope, configuration, readOnly).servers();
     for (ScopedMcp server : attached) {
       // The central qits server only with fixed headers (qits-625): Kimi has no headers helper, so
       // without a header the server would only ever answer 401 — a dead tool, not a missing one.
@@ -1114,7 +1124,8 @@ public final class AgentLaunchService {
   }
 
   /**
-   * Renders the autonomous run as a stream-json chat — the same render as {@link #renderChat}.
+   * Renders the autonomous run as a stream-json chat — like {@link #renderChat}, but with each
+   * server URL read-only marked.
    */
   LaunchSpec renderAutonomousChat(
       AgentMcpScope scope, AgentSurface surface, PinnedSession pinned, AgentType agentType) {
@@ -1124,7 +1135,7 @@ public final class AgentLaunchService {
   /** {@link #renderAutonomousChat} with the launch record beside it. */
   Rendered renderedAutonomousChat(
       AgentMcpScope scope, AgentSurface surface, PinnedSession pinned, AgentType agentType) {
-    return render(scope, surface, pinned, agentType, false, null);
+    return render(scope, surface, pinned, agentType, false, true, null);
   }
 
   /**
@@ -1148,7 +1159,7 @@ public final class AgentLaunchService {
       String initialContext,
       PinnedSession pinned,
       AgentType agentType) {
-    return render(scope, surface, pinned, agentType, true, initialContext);
+    return render(scope, surface, pinned, agentType, true, false, initialContext);
   }
 
   /**
@@ -1156,6 +1167,10 @@ public final class AgentLaunchService {
    *
    * <p>A chat calls {@code chat()}; an interactive launch calls {@code start()} and carries an argv
    * seed. One render means one launch record, so the record cannot disagree with what ran.
+   *
+   * <p>{@code unattended} is the autonomous run's fence: nobody watches a composed run's first turn
+   * under skip-permissions, so every server url is read-only marked. The fence is the union of the
+   * run's shape and the configuration's own {@code readOnly} flag. See {@link #markReadOnly}.
    */
   private Rendered render(
       AgentMcpScope scope,
@@ -1163,10 +1178,11 @@ public final class AgentLaunchService {
       PinnedSession pinned,
       AgentType agentType,
       boolean interactive,
+      boolean unattended,
       String initialContext) {
     AgentSurfaceConfiguration configuration = configurationFor(surface);
     CodingAgent agent = CodingAgentFactory.ofType(agentType);
-    Attached resolved = attachedServers(scope, configuration);
+    Attached resolved = attachedServers(scope, configuration, unattended);
     List<ScopedMcp> attached = resolved.servers();
     for (ScopedMcp server : attached) {
       // Two rules for the central `qits` platform server (qits-630, owner-decided), Claude only —
@@ -1261,8 +1277,9 @@ public final class AgentLaunchService {
       boolean interactive) {
     List<AgentLaunchRecord.AttachedServer> servers = new ArrayList<>();
     for (ScopedMcp server : attached.servers()) {
-      // Never read-only: no platform server takes the old url fence any more (qits-1174).
-      servers.add(new AgentLaunchRecord.AttachedServer(server.key(), false));
+      servers.add(
+          new AgentLaunchRecord.AttachedServer(
+              server.key(), server.url().contains(READ_ONLY_MARKER)));
     }
     if (agentType == AgentType.CLAUDE) {
       for (LocalMcp server : mcpServers.localServers()) {
@@ -1409,11 +1426,20 @@ public final class AgentLaunchService {
    * was configured with looks normal and simply cannot do its job.
    *
    * <p>An attachment with an empty pre-approval list takes the host's shipped one.
+   *
+   * <p>{@code unattended}, or an attachment's own {@code readOnly}, read-only marks the url — see
+   * {@link #markReadOnly}.
    */
   @SuppressWarnings("deprecation")
-  private Attached attachedServers(AgentMcpScope scope, AgentSurfaceConfiguration configuration) {
+  private Attached attachedServers(
+      AgentMcpScope scope, AgentSurfaceConfiguration configuration, boolean unattended) {
     if (!configuration.attachesConfiguredServers()) {
-      return new Attached(List.copyOf(mcpServers.serversFor(scope)), List.of());
+      List<ScopedMcp> hosted = mcpServers.serversFor(scope);
+      return new Attached(
+          unattended
+              ? hosted.stream().map(AgentLaunchService::markReadOnly).toList()
+              : List.copyOf(hosted),
+          List.of());
     }
     List<ScopedMcp> attached = new ArrayList<>();
     List<String> notes = new ArrayList<>();
@@ -1442,16 +1468,35 @@ public final class AgentLaunchService {
                           + " configuration attaches the '"
                           + key
                           + "' MCP server, which this daemon does not serve"));
-      attached.add(
+      ScopedMcp resolved =
           new ScopedMcp(
               server.key(),
               server.url(),
               attachment.allowedTools().isEmpty()
                   ? server.allowedTools()
                   : attachment.allowedTools(),
-              server.headers()));
+              server.headers());
+      attached.add(unattended || attachment.readOnly() ? markReadOnly(resolved) : resolved);
     }
     return new Attached(List.copyOf(attached), List.copyOf(notes));
+  }
+
+  /** The query parameter that read-only marks a platform server's url. */
+  static final String READ_ONLY_MARKER = "agentReadOnly=true";
+
+  /**
+   * The same server with its url read-only marked: {@code agentReadOnly=true} appended. The fence
+   * lives in the central {@code qits} server: with the marker it lists and runs only commands marked
+   * as reads, and fails closed. On Claude the marked url is what the headers-helper entry carries
+   * too; on Kimi it is the ACP server url.
+   */
+  private static ScopedMcp markReadOnly(ScopedMcp server) {
+    return new ScopedMcp(
+        server.key(), readOnlyMarked(server.url()), server.allowedTools(), server.headers());
+  }
+
+  private static String readOnlyMarked(String url) {
+    return url + (url.contains("?") ? "&" : "?") + READ_ONLY_MARKER;
   }
 
   /**

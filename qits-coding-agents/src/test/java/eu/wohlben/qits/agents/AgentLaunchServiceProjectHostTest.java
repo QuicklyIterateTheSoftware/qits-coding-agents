@@ -482,6 +482,21 @@ class AgentLaunchServiceProjectHostTest {
     }
 
     @Test
+    void anAutonomousRunMarksEveryServerReadOnly() {
+      AgentLaunchService service = service();
+      AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
+
+      LaunchSpec spec =
+          service.renderAutonomousChat(
+              AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK, pinned, AgentType.CLAUDE);
+
+      assertEquals(
+          1,
+          spec.script().split("agentReadOnly=true", -1).length - 1,
+          "every server is fenced, or the unattended turn could mutate through MCP");
+    }
+
+    @Test
     void anInteractiveLaunchEmbedsTheSeedAndRendersTheRepl() {
       AgentLaunchService service = service();
       AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
@@ -1465,7 +1480,9 @@ class AgentLaunchServiceProjectHostTest {
     }
 
     @Test
-    void anAutonomousRunLeavesTheQitsUrlUnmarked() {
+    void anAutonomousRunMarksTheQitsUrlReadOnly() {
+      // The fence lives in the central server: with agentReadOnly=true it lists and runs only
+      // commands marked as reads, and fails closed. The headers-helper entry carries the marked url.
       AgentLaunchService service = serviceWith(withQits());
       AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
 
@@ -1475,7 +1492,40 @@ class AgentLaunchServiceProjectHostTest {
                   AgentMcpScope.PROJECT, AgentSurface.EPIC_AUTONOMOUS, pinned, AgentType.CLAUDE)
               .script();
 
+      assertTrue(
+          script.contains(
+              "\"qits\":{\"type\":\"http\",\"url\":\"http://dev-qits-platform-access-mcp-service:8080/mcp?agentReadOnly=true\","
+                  + "\"headersHelper\":\"qits mcp-credential\"}"),
+          script);
+    }
+
+    @Test
+    void aChatLeavesTheQitsUrlUnmarked() {
+      AgentLaunchService service = serviceWith(withQits());
+      AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
+
+      String script =
+          service
+              .renderChat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK, pinned, AgentType.CLAUDE)
+              .script();
+
       assertFalse(script.contains("agentReadOnly"), script);
+    }
+
+    @Test
+    void kimisAutonomousSessionCarriesTheMarkedQitsUrl() {
+      AgentLaunchService service = serviceWith(withQitsAndABearer());
+
+      AcpSessionConfig config =
+          service.buildAcpSessionConfig(
+              AgentMcpScope.PROJECT,
+              AgentSurface.EPIC_AUTONOMOUS,
+              service.pinSession(null, false, AgentType.KIMI),
+              true);
+
+      assertEquals(
+          "http://dev-qits-platform-access-mcp-service:8080/mcp?agentReadOnly=true",
+          config.mcpServers().get(0).url());
     }
 
     private AgentMcpServers withQitsAndABearer() {
@@ -1502,7 +1552,7 @@ class AgentLaunchServiceProjectHostTest {
 
       assertTrue(
           script.contains(
-              "\"qits\":{\"type\":\"http\",\"url\":\"http://dev-qits-platform-access-mcp-service:8080/mcp\","
+              "\"qits\":{\"type\":\"http\",\"url\":\"http://dev-qits-platform-access-mcp-service:8080/mcp?agentReadOnly=true\","
                   + "\"headers\":{\"Authorization\":\"Bearer t\"}}"),
           script);
       assertFalse(script.contains("headersHelper"), script);
@@ -1949,14 +1999,15 @@ class AgentLaunchServiceProjectHostTest {
     }
 
     @Test
-    void anUnattendedRunRecordsItsServersUnfenced() {
-      // No url fence any more (qits-1174): the qits server is scoped by the caller's bearer.
+    void anUnattendedRunRecordsThatItsServersWereFenced() {
       Command command = service().launchAutonomous("Composed run");
       JsonObject record = new JsonObject(command.agentLaunchRecord());
 
       assertEquals("epic.autonomous", record.getString("surface"));
       assertEquals("qits", record.getJsonArray("mcpServers").getJsonObject(0).getString("server"));
-      assertFalse(record.getJsonArray("mcpServers").getJsonObject(0).getBoolean("readOnly"));
+      assertTrue(
+          record.getJsonArray("mcpServers").getJsonObject(0).getBoolean("readOnly"),
+          "the fence is part of what it ran with");
     }
 
     @Test
@@ -2085,13 +2136,13 @@ class AgentLaunchServiceProjectHostTest {
               "",
               SeededConfigurationDocument.server(
                   "qits", false, false, false, false, List.of("mcp__qits__*")))
-          // The composed run: the same server, steered to delegate.
+          // The composed run: the same server, read-only marked, steered to delegate.
           .surface(
               AgentSurface.EPIC_AUTONOMOUS,
               true,
               AgentLaunchService.COMPOSED_RUN_PROMPT,
               SeededConfigurationDocument.server(
-                  "qits", false, false, false, false, List.of("mcp__qits__*")))
+                  "qits", false, false, false, true, List.of("mcp__qits__*")))
           .configurations();
     }
 
@@ -2128,8 +2179,9 @@ class AgentLaunchServiceProjectHostTest {
     }
 
     @Test
-    void theComposedRunRendersTheSameFromEitherSide() {
-      // No url fence any more (qits-1174): the qits server is scoped by the caller's bearer.
+    void theComposedRunRendersItsFenceFromEitherSide() {
+      // The autonomous shape marks every url read-only, and the seeded epic.autonomous row carries
+      // readOnly too. The two must agree rather than one double-marking the url.
       AgentLaunchService service = service();
       AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
 
@@ -2148,7 +2200,7 @@ class AgentLaunchServiceProjectHostTest {
               .script();
 
       assertEquals(constants, configured);
-      assertFalse(configured.contains("agentReadOnly"), configured);
+      assertEquals(1, configured.split("agentReadOnly=true", -1).length - 1, configured);
     }
 
     @Test
