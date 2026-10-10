@@ -17,7 +17,8 @@ import java.util.Optional;
  * thing), VERIFYING {@code info} (blue, same reasoning as IMPLEMENTING — it is the platform's own
  * verify dispatch rather than a different kind of thing), DONE {@code success} (green), DROPPED
  * {@code neutral} — and its {@code BLOCKED_BADGE} is {@code danger}, the red this palette leaves to
- * {@link AgentRemoteControl#BLOCKED_GLYPH} and to nothing else. VERIFIED is the one deliberate
+ * {@link AgentRemoteControl#BLOCKED_GLYPH} — or its derived twin {@link
+ * AgentRemoteControl#AGENT_WAITING_GLYPH} — and to nothing else. VERIFIED is the one deliberate
  * divergence (ticket qits-758): the UI badge stays {@code warning} (yellow), but in the session name
  * it is a check mark rather than a square. Yellow reads as a warning in the claude.ai session list,
  * and VERIFIED is checked work waiting for a person to close it, not a problem; the check mark also

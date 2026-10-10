@@ -261,6 +261,61 @@ class HarnessKnobsTest {
     }
 
     @Test
+    void aBlockThatIsOnlyAnAgentWaitingOnAPersonWearsTheQuestionGlyph() {
+      assertEquals("\u2049\uFE0F", AgentRemoteControl.AGENT_WAITING_GLYPH);
+      assertEquals("\u2049\uFE0F ", AgentRemoteControl.AGENT_WAITING_MARKER);
+      assertEquals(
+          "\u2049\uFE0F\uD83D\uDFE6 qits-555 Comments on every work entity",
+          AgentRemoteControl.sessionName(
+              "qits-555",
+              new EntityFacts(TITLE, "IMPLEMENTED", true, "AGENT_WAITING"),
+              "workspace.agent",
+              "b"),
+          "against the square, exactly where the blocked glyph would stand");
+      assertEquals(
+          "\u2049\uFE0F qits-555 Comments on every work entity",
+          AgentRemoteControl.sessionName(
+              "qits-555", new EntityFacts(TITLE, null, true, "AGENT_WAITING"), "s", "b"),
+          "no square, so one space");
+      assertEquals(
+          "\u2049\uFE0F qits epic.agent refining/some-epic",
+          AgentRemoteControl.sessionName(
+              null,
+              new EntityFacts(null, null, true, "AGENT_WAITING"),
+              AgentSurface.EPIC_AGENT,
+              "refining/some-epic"),
+          "an entity-less session is marked the same way");
+    }
+
+    @Test
+    void anExplicitBlockOrBothKeepsTheExclamationGlyph() {
+      for (String source : java.util.Arrays.asList(null, "EXPLICIT", "BOTH", "SOMETHING_NEW")) {
+        assertEquals(
+            "\u2757\uD83D\uDFE6 qits-555 Comments on every work entity",
+            AgentRemoteControl.sessionName(
+                "qits-555", new EntityFacts(TITLE, "IMPLEMENTED", true, source), "s", "b"),
+            String.valueOf(source));
+      }
+      assertEquals(
+          new EntityFacts(TITLE, "IMPLEMENTED", true, null),
+          facts(TITLE, "IMPLEMENTED", true),
+          "the three-fact constructor is an explicit block");
+    }
+
+    @Test
+    void aSourceWithoutABlockMarksNothing() {
+      EntityFacts waiting = new EntityFacts(TITLE, "IMPLEMENTED", false, "AGENT_WAITING");
+      assertFalse(waiting.waitingOnAPerson());
+      assertEquals(
+          "\uD83D\uDFE6 qits-555 Comments on every work entity",
+          AgentRemoteControl.sessionName("qits-555", waiting, "s", "b"));
+      assertEquals(
+          new EntityFacts(TITLE, "IMPLEMENTED", true, null),
+          new EntityFacts(TITLE, "IMPLEMENTED", true, "AGENT_WAITING").withBlocked(true),
+          "withBlocked(boolean) is explicit and clears the source");
+    }
+
+    @Test
     void theNameDegradesOneFactAtATime() {
       assertEquals(
           "qits-555 Comments on every work entity",

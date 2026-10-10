@@ -1894,6 +1894,30 @@ class AgentLaunchServiceProjectHostTest {
     }
 
     @Test
+    void setBlockedWithAnAgentWaitingSourceRenamesWithTheQuestionGlyph() {
+      forTicket();
+      configurations = remoteControlOn();
+      commands.spawnTransports = true;
+      AgentLaunchService service = service();
+      Command command = service.launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK));
+
+      assertEquals(1, service.setBlocked(true, EntityFacts.AGENT_WAITING));
+      assertEquals(
+          List.of(command.id() + " \u2049\uFE0F\uD83D\uDFE6 qits-614 Session names"),
+          commands.renames);
+      assertEquals(
+          new EntityFacts("Session names", "IMPLEMENTED", true, EntityFacts.AGENT_WAITING),
+          service.entity());
+
+      commands.renames.clear();
+      assertEquals(1, service.setBlocked(true));
+      assertEquals(
+          List.of(command.id() + " " + BLOCKED_IMPLEMENTED_NAME),
+          commands.renames,
+          "the old overload is an explicit block, and clears the derived source");
+    }
+
+    @Test
     void setEntityLeavesAChatWithRemoteControlOffAlone() {
       forTicket();
       configurations =

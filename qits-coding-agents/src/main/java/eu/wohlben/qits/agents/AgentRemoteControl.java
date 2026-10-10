@@ -111,6 +111,20 @@ public final class AgentRemoteControl {
   public static final String BLOCKED_MARKER = BLOCKED_GLYPH + " ";
 
   /**
+   * What stands in for {@link #BLOCKED_GLYPH} when the block is only derived — the entity's agent
+   * session went idle waiting on a person ({@link EntityFacts#waitingOnAPerson}): {@code ⁉️},
+   * U+2049 with the emoji presentation selector U+FE0F. Still red and still in front, because it
+   * still asks for a person; a different glyph because what it asks for is an answer to the agent,
+   * not an unblocking. A block that is explicit, or explicit and derived at once, keeps {@code ❗}.
+   * It takes the same place as {@link #BLOCKED_GLYPH}: against the square, or followed by one space
+   * where there is none ({@link #AGENT_WAITING_MARKER}).
+   */
+  public static final String AGENT_WAITING_GLYPH = "\u2049\uFE0F";
+
+  /** {@link #AGENT_WAITING_GLYPH} and one space, the twin of {@link #BLOCKED_MARKER}. */
+  public static final String AGENT_WAITING_MARKER = AGENT_WAITING_GLYPH + " ";
+
+  /**
    * The project desk's name: {@link AgentSurface#PROJECT_WORK} runs for no entity, so the
    * entity-less fallback would call it {@code qits project.work} — an internal key no person
    * recognises. A bug icon stands in the slot the status square takes, so the desk lines up with the
@@ -130,8 +144,9 @@ public final class AgentRemoteControl {
    *
    * <p>With an entity — a non-blank {@code entityId}, trimmed — the name is {@code
    * [❗]<square> <entityId> <title>}: {@code 🟦 qits-555 Comments on every work entity}, or {@code
-   * ❗🟦 qits-555 Comments on every work entity} while it is blocked. It degrades one fact at a time
-   * rather than falling back wholesale, because each fact is independently useful:
+   * ❗🟦 qits-555 Comments on every work entity} while it is blocked — {@code ⁉️🟦 …} instead when
+   * the block is only its agent waiting on a person ({@link #AGENT_WAITING_GLYPH}). It degrades one
+   * fact at a time rather than falling back wholesale, because each fact is independently useful:
    *
    * <ul>
    *   <li>a status this library cannot square (absent, or a word {@link EntityStatusSquare} does
@@ -155,19 +170,20 @@ public final class AgentRemoteControl {
   public static String sessionName(
       String entityId, EntityFacts facts, String surfaceKey, String branch) {
     EntityFacts known = facts == null ? EntityFacts.NONE : facts;
+    String glyph = blockGlyph(known);
     String id = entityId == null ? "" : entityId.trim();
     String name;
     if (!id.isEmpty()) {
       Optional<EntityStatusSquare> square = EntityStatusSquare.of(known.status());
       String lead =
           square
-              .map(s -> (known.blocked() ? BLOCKED_GLYPH : "") + s.square() + " ")
-              .orElse(known.blocked() ? BLOCKED_MARKER : "");
+              .map(s -> glyph + s.square() + " ")
+              .orElse(glyph.isEmpty() ? "" : glyph + " ");
       String title = sanitisedTitle(known.title());
       name = title.isEmpty() ? lead + id : lead + id + " " + title;
     } else {
       String unmarked = entityLessName(surfaceKey, branch);
-      name = known.blocked() ? BLOCKED_MARKER + unmarked : unmarked;
+      name = glyph.isEmpty() ? unmarked : glyph + " " + unmarked;
     }
     return withoutControls(name);
   }
@@ -176,6 +192,17 @@ public final class AgentRemoteControl {
   public static String sessionName(
       String entityId, EntityFacts facts, AgentSurface surface, String branch) {
     return sessionName(entityId, facts, surface == null ? null : surface.key(), branch);
+  }
+
+  /**
+   * The glyph a block puts in front of a name: none when not blocked, {@link #AGENT_WAITING_GLYPH}
+   * when the block is only an agent waiting on a person, {@link #BLOCKED_GLYPH} otherwise.
+   */
+  private static String blockGlyph(EntityFacts facts) {
+    if (!facts.blocked()) {
+      return "";
+    }
+    return facts.waitingOnAPerson() ? AGENT_WAITING_GLYPH : BLOCKED_GLYPH;
   }
 
   private static String entityLessName(String surfaceKey, String branch) {

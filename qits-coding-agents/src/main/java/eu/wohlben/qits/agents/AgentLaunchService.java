@@ -398,6 +398,15 @@ public final class AgentLaunchService {
     return setEntity(entity.withBlocked(blocked));
   }
 
+  /**
+   * {@link #setBlocked(boolean)} with the block's source — {@code EXPLICIT}, {@link
+   * EntityFacts#AGENT_WAITING} or {@code BOTH}, null for explicit — which picks the glyph the name
+   * wears (see {@link AgentRemoteControl#AGENT_WAITING_GLYPH}).
+   */
+  public int setBlocked(boolean blocked, String blockSource) {
+    return setEntity(entity.withBlocked(blocked, blockSource));
+  }
+
   /** Whether launches currently render the blocked marker. */
   public boolean blocked() {
     return entity.blocked();

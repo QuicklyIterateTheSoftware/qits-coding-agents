@@ -18,15 +18,44 @@ package eu.wohlben.qits.agents;
  *     null/blank when unknown. A word this
  *     library does not know renders no square rather than failing; see {@link EntityStatusSquare}
  * @param blocked whether the entity is BLOCKED
+ * @param blockSource why it is, as the host words it — {@code EXPLICIT} (a person or agent blocked
+ *     it), {@link #AGENT_WAITING} (only derived: its agent session is idle, waiting on a person) or
+ *     {@code BOTH} — or null, which means explicit. Read only while {@code blocked}; a word this
+ *     library does not know reads as explicit, so a new source never hides the block
  */
-public record EntityFacts(String title, String status, boolean blocked) {
+public record EntityFacts(String title, String status, boolean blocked, String blockSource) {
+
+  /**
+   * The one block source that changes the name: the block is derived from an agent waiting on a
+   * person and from nothing else, so the session wears {@link
+   * AgentRemoteControl#AGENT_WAITING_GLYPH} rather than {@link AgentRemoteControl#BLOCKED_GLYPH}.
+   */
+  public static final String AGENT_WAITING = "AGENT_WAITING";
 
   /** Nothing known: no title, no status, not blocked. */
   public static final EntityFacts NONE = new EntityFacts(null, null, false);
 
-  /** These facts with only the blocked flag changed — what {@code setBlocked} is now. */
+  /** Facts with no block source, which is an explicit block — the shape before qits-895. */
+  public EntityFacts(String title, String status, boolean blocked) {
+    this(title, status, blocked, null);
+  }
+
+  /** Whether the block is only an agent waiting on a person: blocked, with {@link #AGENT_WAITING}. */
+  public boolean waitingOnAPerson() {
+    return blocked && AGENT_WAITING.equals(blockSource);
+  }
+
+  /**
+   * These facts with only the blocked flag changed and the block source cleared — what {@code
+   * setBlocked} is now.
+   */
   public EntityFacts withBlocked(boolean blocked) {
-    return new EntityFacts(title, status, blocked);
+    return withBlocked(blocked, null);
+  }
+
+  /** These facts with only the blocked flag and its source changed; null source is explicit. */
+  public EntityFacts withBlocked(boolean blocked, String blockSource) {
+    return new EntityFacts(title, status, blocked, blockSource);
   }
 
   /**
