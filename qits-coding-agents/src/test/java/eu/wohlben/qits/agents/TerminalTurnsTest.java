@@ -29,4 +29,10 @@ class TerminalTurnsTest {
   void aLiteralBackslashNTheTurnAlreadyHadIsKept() {
     assertEquals("say \\n here\\nnext", TerminalTurns.oneLine("say \\n here\nnext"));
   }
+
+  @Test
+  void controlCharactersAreNotTypedAsKeystrokes() {
+    assertEquals(
+        "a b[31mred c d", TerminalTurns.oneLine("a\tb\u001b[31mred\u0003 c\u0015 d\u007f\u009b"));
+  }
 }

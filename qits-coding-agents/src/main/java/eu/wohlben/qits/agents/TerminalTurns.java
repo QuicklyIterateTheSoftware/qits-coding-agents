@@ -11,18 +11,30 @@ import java.util.regex.Pattern;
  * \n} or a lone {@code \r}) becomes the two characters backslash and {@code n}, the whole turn is
  * one line, and one carriage return submits it.
  *
+ * <p>Every other control character is a keystroke too: ESC starts a terminal sequence, Ctrl-C
+ * interrupts, Ctrl-U clears the line, Tab completes. A turn can carry text from outside (comments,
+ * event data), so tabs become spaces and the remaining control characters (C0, DEL, C1) are removed.
+ *
  * <p>This is for the PTY only. The turn keeps its real newlines everywhere else: in the host's
  * rows, in a chat's stdin, and in an argv seed, where a quoted argument carries them safely.
  */
 public final class TerminalTurns {
 
   private static final Pattern NEWLINE = Pattern.compile("\r\n|\r|\n");
+  private static final Pattern CONTROL = Pattern.compile("[\\x00-\\x08\\x0b\\x0c\\x0e-\\x1f\\x7f-\\x9f]");
 
   private TerminalTurns() {}
 
-  /** The turn on one line: every newline replaced by a literal backslash and {@code n}. */
+  /**
+   * The turn on one line: every newline replaced by a literal backslash and {@code n}, tabs by
+   * spaces, other control characters removed.
+   */
   public static String oneLine(String text) {
-    return text == null ? "" : NEWLINE.matcher(text).replaceAll("\\\\n");
+    if (text == null) {
+      return "";
+    }
+    String plain = CONTROL.matcher(text.replace('\t', ' ')).replaceAll("");
+    return NEWLINE.matcher(plain).replaceAll("\\\\n");
   }
 
   /** The bytes to write to the PTY: the turn on one line, then the carriage return that submits. */
