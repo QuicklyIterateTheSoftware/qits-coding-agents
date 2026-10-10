@@ -19,9 +19,9 @@ import java.util.List;
  * something that holds one. The other places it must not reach are handled where they are: the
  * rendered command is stored redacted, and the launch record names attached servers <em>by key</em>.
  *
- * @param key the key this server renders under. Never {@code repository}, {@code actions} or {@code
- *     observability} — those are the platform's own, and an entry displacing one would be a session
- *     that looks entirely normal while talking to somebody else's server
+ * @param key the key this server renders under. Never one of {@link
+ *     AgentConfigurationDocument#RESERVED_SERVER_KEYS} — an entry displacing the platform's own
+ *     server would be a session that looks normal while talking to somebody else's server
  * @param url an http(s) url; the only transport both harnesses can carry (Kimi carries servers
  *     protocol-native over ACP and has no place for a stdio command)
  * @param headerName the header the credential is presented in; empty when the server takes none

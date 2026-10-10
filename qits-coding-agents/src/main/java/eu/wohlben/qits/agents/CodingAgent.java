@@ -18,8 +18,8 @@ import java.util.Map;
  *
  * <pre>{@code
  * LaunchSpec spec = CodingAgentFactory.ofType(AgentType.CLAUDE)
- *     .mcpServer("repository", McpServers.httpMcp(scopedUrl))
- *     .allowedTools(READ_ONLY_REPOSITORY_TOOLS)
+ *     .mcpServer("qits", McpServers.httpMcp(url, headers))
+ *     .allowedTools(List.of("mcp__qits__*"))
  *     .initialContext(seed)
  *     .start();
  * }</pre>

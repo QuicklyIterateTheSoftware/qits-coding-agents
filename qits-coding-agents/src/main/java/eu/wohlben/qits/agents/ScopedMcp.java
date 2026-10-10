@@ -4,8 +4,8 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * One MCP server as a launch attaches it: the key it is registered under, its already-narrowed URL,
- * and the tools pre-approved on it.
+ * One MCP server as a launch attaches it: the key it is registered under, its URL, and the tools
+ * pre-approved on it.
  *
  * <p>A top-level record rather than a nested one, because it is now the currency of a seam: {@link
  * AgentMcpServers} produces these and {@link AgentLaunchService} renders them, and the two sides

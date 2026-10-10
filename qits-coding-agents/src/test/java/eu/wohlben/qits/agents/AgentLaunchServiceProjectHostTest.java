@@ -313,36 +313,12 @@ class AgentLaunchServiceProjectHostTest {
         }
       };
 
-  /** The one server, on its owning service's segment, as {@code DaemonMcpEndpoints} resolves it. */
-  private static final McpEndpoints ENDPOINTS =
-      new McpEndpoints() {
-        @Override
-        public String mcpUrl(String server) {
-          if ("repository".equals(server)) {
-            return "http://qits:8080/projects/mcp";
-          }
-          throw new IllegalArgumentException("Unknown MCP server: " + server);
-        }
-
-        @Override
-        public String projectId() {
-          return PROJECT;
-        }
-      };
-
-  /** This daemon's mapping, narrowed to the wrapper repository the container checked out. */
-  private static final AgentMcpServers MCP_SERVERS = serversWithRepo(REPO);
-
-  private static AgentMcpServers serversWithRepo(String repoName) {
-    return new ProjectHostMcpServers(ENDPOINTS, repoName);
-  }
+  /** This daemon's servers: the central {@code qits} server, and nothing else. */
+  private static final AgentMcpServers MCP_SERVERS = new ProjectHostMcpServers();
 
   /** The live transcript tail of the last {@link #serviceWith} service. */
   private AgentTranscriptTailService tail;
 
-  private AgentLaunchService serviceWithRepo(String repoName) {
-    return serviceWith(serversWithRepo(repoName));
-  }
 
   private AgentLaunchService service() {
     return serviceWith(MCP_SERVERS);
@@ -439,105 +415,9 @@ class AgentLaunchServiceProjectHostTest {
   class McpScoping {
 
     @Test
-    void repositoryScopeNarrowsByProjectAndRepository() {
-      List<ScopedMcp> servers = MCP_SERVERS.serversFor(AgentMcpScope.REPOSITORY);
-
-      assertEquals(1, servers.size(), "a project agent addresses qits-projects and nothing else");
-      assertEquals("repository", servers.get(0).key());
-      assertEquals(
-          "http://qits:8080/projects/mcp?projectId=" + PROJECT + "&repositoryId=" + REPO,
-          servers.get(0).url());
-    }
-
-    @Test
-    void projectScopeDropsTheRepositoryNarrowing() {
-      List<ScopedMcp> servers = MCP_SERVERS.serversFor(AgentMcpScope.PROJECT);
-
-      assertEquals(1, servers.size());
-      assertEquals(
-          "http://qits:8080/projects/mcp?projectId=" + PROJECT,
-          servers.get(0).url(),
-          "project scope sees every repository, so it must not carry repositoryId");
-    }
-
-    @Test
-    void thePlatformsSlugRepositoryIdsAreValidScopeIds() {
-      // Repository ids on this platform are directory-name slugs (qits-stt) — the join key
-      // everywhere. Validating them as strict UUIDs 400'd every launch on every real repository.
-      // UUIDs still pass as a subset of the slug grammar.
-      List<ScopedMcp> servers =
-          serversWithRepo("qits-stt").serversFor(AgentMcpScope.REPOSITORY);
-
-      assertTrue(servers.get(0).url().contains("repositoryId=qits-stt"));
-    }
-
-    @Test
-    void aScopeIdOutsideTheSlugAlphabetIsStillRefused() {
-      // The relaxation is exactly to the platform grammar, no further: these values are
-      // interpolated into single-quoted launch args, so a quote, a space, or a leading dash must
-      // still refuse the launch.
-      assertThrows(
-          InvalidCommandRequestException.class,
-          () -> serversWithRepo("qits'stt").serversFor(AgentMcpScope.REPOSITORY));
-      assertThrows(
-          InvalidCommandRequestException.class,
-          () -> serversWithRepo("-leading").serversFor(AgentMcpScope.REPOSITORY));
-      assertThrows(
-          InvalidCommandRequestException.class,
-          () -> serversWithRepo("").serversFor(AgentMcpScope.REPOSITORY));
-    }
-
-    @Test
-    void onlyReadOnlyToolsArePreApproved() {
-      List<ScopedMcp> servers = MCP_SERVERS.serversFor(AgentMcpScope.PROJECT);
-
-      assertTrue(servers.get(0).allowedTools().contains("mcp__repository__taskPrompt"));
-      assertFalse(
-          servers.get(0).allowedTools().stream().anyMatch(t -> t.contains("create")),
-          "a mutating tool must still prompt");
-      assertFalse(
-          servers.get(0).allowedTools().stream().anyMatch(t -> t.contains("transition")),
-          "moving a ticket's state is a write like any other");
-      assertFalse(
-          servers.get(0).allowedTools().stream().anyMatch(t -> t.contains("integrateBranch")));
-    }
-
-    @Test
-    void theEpicSurveyIsPreApprovedAndTheEpicWritesAreNot() {
-      // The refinement agent has to read the plan before it can tell "extend this draft" from
-      // "propose a new epic"; drafting one is a change to the project and still prompts.
-      List<String> allowed = MCP_SERVERS.serversFor(AgentMcpScope.PROJECT).get(0).allowedTools();
-
-      assertTrue(allowed.contains("mcp__repository__list_epics"), allowed.toString());
-      assertTrue(allowed.contains("mcp__repository__get_epic"), allowed.toString());
-      assertFalse(allowed.contains("mcp__repository__propose_epic"));
-      assertFalse(allowed.stream().anyMatch(t -> t.startsWith("mcp__repository__add_")));
-      assertFalse(allowed.stream().anyMatch(t -> t.startsWith("mcp__repository__update_")));
-      assertFalse(allowed.stream().anyMatch(t -> t.startsWith("mcp__repository__remove_")));
-    }
-
-    @Test
-    void theTicketSurveyIsPreApprovedAndTheTicketWritesAreNot() {
-      // The exact parallel to the epic survey one surface down: the tickets desk has to read what
-      // is already filed before it can tell an intake from a duplicate, and get_ticket brings the
-      // comment thread with it. Filing, assigning, commenting and resolving all change the
-      // project's record of work, so all four still prompt.
-      List<String> allowed = MCP_SERVERS.serversFor(AgentMcpScope.PROJECT).get(0).allowedTools();
-
-      assertTrue(allowed.contains("mcp__repository__list_tickets"), allowed.toString());
-      assertTrue(allowed.contains("mcp__repository__get_ticket"), allowed.toString());
-      assertFalse(allowed.contains("mcp__repository__create_ticket"));
-      assertFalse(allowed.contains("mcp__repository__update_ticket"));
-      assertFalse(allowed.contains("mcp__repository__transition_ticket"));
-      assertFalse(allowed.contains("mcp__repository__add_ticket_comment"));
-      assertFalse(allowed.contains("mcp__repository__update_ticket_comment"));
-    }
-
-    @Test
-    void theWorkspaceWorldServersAreNotWiredIntoALaunch() {
-      // The workspace daemon attaches actions/repository/observability. A refinement agent's job is
-      // the project's plan, so only the epic-carrying server is attached — and --strict-mcp-config
-      // is what stops the shared /claude-home volume putting the others back.
+    void theOnlyPlatformServerIsQits() {
+      // qits-1174: the per-service servers are retired. --strict-mcp-config is what stops the
+      // shared /claude-home volume putting any of them back.
       AgentLaunchService service = service();
       AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
 
@@ -547,16 +427,25 @@ class AgentLaunchServiceProjectHostTest {
               .script();
 
       assertTrue(script.contains("--strict-mcp-config"), script);
-      assertEquals(
-          1,
-          script.split("\"mcpServers\"", -1).length - 1,
-          "one --mcp-config, and it is the whole set the session may use");
-      assertEquals(
-          1,
-          script.split("\"repository\":", -1).length - 1,
-          "exactly one server, keyed 'repository' — the one carrying the epic tools");
+      assertEquals(1, script.split("\"mcpServers\"", -1).length - 1, script);
+      assertTrue(script.contains("\"qits\":{\"type\":\"http\""), script);
+      assertFalse(script.contains("\"repository\":"), script);
       assertFalse(script.contains("\"actions\":"), script);
       assertFalse(script.contains("\"observability\":"), script);
+    }
+
+    @Test
+    void aHostWithNoAddressForQitsStillLaunches() {
+      AgentLaunchService service =
+          serviceWith(new ProjectHostMcpServers(Optional.empty(), Map.of()));
+      AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
+
+      String script =
+          service
+              .renderChat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK, pinned, AgentType.CLAUDE)
+              .script();
+
+      assertFalse(script.contains("\"qits\":"), script);
     }
   }
 
@@ -574,7 +463,7 @@ class AgentLaunchServiceProjectHostTest {
           service.renderChat(AgentMcpScope.REPOSITORY, AgentSurface.PROJECT_WORK, pinned, AgentType.CLAUDE);
 
       assertTrue(spec.script().contains("--input-format stream-json"));
-      assertTrue(spec.script().contains("repositoryId=" + REPO));
+      assertTrue(spec.script().contains(ProjectHostMcpServers.PLATFORM_URL), spec.script());
       assertTrue(spec.script().contains("--dangerously-skip-permissions"));
       assertEquals(CLAUDE_MOUNT, spec.environment().get("HOME"), "the one credential that crosses in");
       assertTrue(
@@ -590,21 +479,6 @@ class AgentLaunchServiceProjectHostTest {
 
       assertEquals(
           "http://127.0.0.1:24680/hooks/claude-code?commandId=c1", service.sessionReportUrl("c1"));
-    }
-
-    @Test
-    void anAutonomousRunMarksEveryServerReadOnly() {
-      AgentLaunchService service = service();
-      AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
-
-      LaunchSpec spec =
-          service.renderAutonomousChat(
-              AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK, pinned, AgentType.CLAUDE);
-
-      assertEquals(
-          1,
-          spec.script().split("agentReadOnly=true", -1).length - 1,
-          "every server is fenced, or the unattended turn could mutate through MCP");
     }
 
     @Test
@@ -714,7 +588,7 @@ class AgentLaunchServiceProjectHostTest {
     void theProjectDeskRendersTheNameItAlwaysHad() {
       service().launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK));
 
-      assertEquals("Claude Code (project MCP)", commands.last().name(), "and it is named as before");
+      assertEquals("Claude Code", commands.last().name(), "and it is named as before");
     }
 
     @Test
@@ -927,7 +801,7 @@ class AgentLaunchServiceProjectHostTest {
     void aChatLaunchNamesItselfAfterTheScopeAndHarness() {
       service().launchChat(chat(AgentMcpScope.PROJECT));
 
-      assertEquals("Claude Code (project MCP)", commands.last().name());
+      assertEquals("Claude Code", commands.last().name());
       assertEquals(CommandKind.CHAT, commands.last().kind());
       assertEquals("CLAUDE", commands.last().agent().agentType());
     }
@@ -1078,7 +952,7 @@ class AgentLaunchServiceProjectHostTest {
                   null));
 
       assertEquals(CommandKind.TERMINAL, commands.last().kind());
-      assertEquals("Claude Code terminal (repository MCP)", commands.last().name());
+      assertEquals("Claude Code terminal", commands.last().name());
     }
 
     @Test
@@ -1313,121 +1187,59 @@ class AgentLaunchServiceProjectHostTest {
    * adopted the seam says so on every launch that attaches servers rather than looking as if it had.
    */
   @Nested
-  class NarrowingSeam {
-
-    /** A host that implements the seam — what both daemons must now do. */
-    private final class NarrowingHost implements AgentMcpServers {
-      @Override
-      public List<ScopedMcp> serversFor(AgentMcpScope scope) {
-        return MCP_SERVERS.serversFor(scope);
-      }
-
-      @Override
-      public Optional<ScopedMcp> serverFor(
-          String key, AgentMcpScope scope, AgentMcpNarrowing narrowing) {
-        if (!"repository".equals(key)) {
-          return Optional.empty();
-        }
-        StringBuilder url = new StringBuilder("http://qits:8080/projects/mcp");
-        // The canonical order — projectId, repositoryId, workspaceId — because the rendered command
-        // line is asserted as a literal on both harnesses.
-        if (narrowing.project()) {
-          url.append("?projectId=").append(AgentMcpIds.requireId(PROJECT, "projectId"));
-        }
-        if (narrowing.repository()) {
-          url.append(url.indexOf("?") < 0 ? "?" : "&")
-              .append("repositoryId=")
-              .append(AgentMcpIds.requireId(REPO, "repositoryId"));
-        }
-        if (narrowing.workspace()) {
-          throw new InvalidCommandRequestException(
-              "This container serves no workspace, so the repository server cannot be narrowed to"
-                  + " one");
-        }
-        return Optional.of(
-            new ScopedMcp(key, url.toString(), ProjectHostMcpServers.READ_ONLY_REPOSITORY_TOOLS));
-      }
-
-      @Override
-      public boolean honoursNarrowing() {
-        return true;
-      }
-    }
+  class SkippedAttachments {
 
     @Test
-    void anAdoptedHostBuildsTheUrlTheDocumentAsksFor() {
-      AgentLaunchService service = serviceWith(new NarrowingHost());
-      AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
-      configurations = attaching(true, false, false);
-
-      assertTrue(
-          service
-              .renderChat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK, pinned, AgentType.CLAUDE)
-              .script()
-              .contains("mcp?projectId=" + PROJECT + "\"}"),
-          "project only, because that is what the attachment asks for");
-
-      configurations = attaching(true, true, false);
-      assertTrue(
-          service
-              .renderChat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK, pinned, AgentType.CLAUDE)
-              .script()
-              .contains("mcp?projectId=" + PROJECT + "&repositoryId=" + REPO + "\"}"),
-          "and the scope no longer decides it");
-    }
-
-    @Test
-    void aNarrowingTheHostCannotSatisfyRefusesRatherThanDroppingIt() {
-      // Dropping the parameter would answer for the whole project where the document asked for one
-      // workspace — a session that looks normal and is addressed wider than it was configured.
-      AgentLaunchService service = serviceWith(new NarrowingHost());
-      AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
-      configurations = attaching(true, false, true);
-
-      assertThrows(
-          InvalidCommandRequestException.class,
-          () ->
-              service.renderChat(
-                  AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK, pinned, AgentType.CLAUDE));
-    }
-
-    @Test
-    void anUnadoptedHostRendersWhatItAlwaysDidAndTheRecordSaysSo() {
-      // The dated half: a daemon picks up a new library at its next release, so a host that has not
-      // implemented serverFor keeps rendering its scope mapping. Visible rather than silent.
-      configurations = attaching(true, true, true);
+    void aStoredSurfaceThatStillNamesARetiredServerLaunchesWithoutIt() {
+      // qits-1174: the stored surfaces are cleaned up in a later release, so a stale attachment
+      // must not stop a launch. It is skipped, and the record says so.
+      configurations =
+          attaching(
+              SeededConfigurationDocument.server("repository", true, true, false, true, List.of()),
+              SeededConfigurationDocument.server("qits", false, false, false, false, List.of()));
 
       Command command = service().launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK));
 
-      assertTrue(
-          commands.last().script().contains("mcp?projectId=" + PROJECT + "\"}"),
-          "the PROJECT scope's own url, whatever the attachment asked for");
+      String script = commands.last().script();
+      assertFalse(script.contains("\"repository\":"), script);
+      assertTrue(script.contains("\"qits\":"), script);
       assertTrue(
           new JsonObject(command.agentLaunchRecord())
               .getJsonArray("notes")
               .encode()
-              .contains("does not yet honour per-attachment MCP narrowing"),
+              .contains("Skipped the 'repository' MCP server"),
+          command.agentLaunchRecord());
+    }
+
+    @Test
+    void aSurfaceThatNamesQitsOnAHostWithNoAddressLaunchesWithoutIt() {
+      // The only platform server: refusing here would stop every launch on that host.
+      configurations =
+          attaching(SeededConfigurationDocument.server("qits", false, false, false, false, List.of()));
+
+      Command command =
+          serviceWith(new ProjectHostMcpServers(Optional.empty(), Map.of()))
+              .launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK));
+
+      assertFalse(commands.last().script().contains("\"qits\":"), commands.last().script());
+      assertTrue(
+          new JsonObject(command.agentLaunchRecord())
+              .getJsonArray("notes")
+              .encode()
+              .contains("QITS_PLATFORM_MCP_URL"),
           command.agentLaunchRecord());
     }
 
     @Test
     void aSurfaceThatConfiguresNoServersIsNotNagged() {
-      // The note belongs to a launch whose document asked for a narrowing. A container with no
-      // document asked for nothing and takes the host's mapping by definition.
       Command command = service().launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK));
 
       assertEquals(0, new JsonObject(command.agentLaunchRecord()).getJsonArray("notes").size());
     }
 
-    private AgentSurfaceConfigurations attaching(
-        boolean project, boolean repository, boolean workspace) {
+    private AgentSurfaceConfigurations attaching(JsonObject... servers) {
       return new SeededConfigurationDocument()
-          .surface(
-              AgentSurface.PROJECT_WORK,
-              false,
-              "",
-              SeededConfigurationDocument.server(
-                  "repository", project, repository, workspace, false, List.of()))
+          .surface(AgentSurface.PROJECT_WORK, false, "", servers)
           .configurations();
     }
   }
@@ -1507,15 +1319,15 @@ class AgentLaunchServiceProjectHostTest {
           service.buildAcpSessionConfig(
               AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK, pinned);
 
-      assertEquals(2, config.mcpServers().size());
-      AcpSessionConfig.AcpMcpServer stripe = config.mcpServers().get(1);
+      // The qits server is left out: Kimi gets it only with fixed headers (qits-625).
+      assertEquals(1, config.mcpServers().size());
+      AcpSessionConfig.AcpMcpServer stripe = config.mcpServers().get(0);
       assertEquals("stripe", stripe.name());
       assertEquals(Map.of("Authorization", STRIPE_TOKEN), stripe.headers());
       assertEquals(
           List.of("listCustomers"),
           stripe.enabledTools(),
           "kimi takes bare names, and an operator's list is honoured in either form");
-      assertEquals(Map.of(), config.mcpServers().get(0).headers(), "a platform server has none");
       assertFalse(stripe.toString().contains("sk-live"), stripe.toString());
     }
 
@@ -1615,8 +1427,7 @@ class AgentLaunchServiceProjectHostTest {
   // --- the central qits platform MCP server (qits-630) -------------------------------------------
 
   /**
-   * The one exception to "built-ins render no {@code --allowedTools}" (see {@link McpScoping}): the
-   * central {@code qits} platform server — reserved as a key (see {@link
+   * The central {@code qits} platform server — reserved as a key (see {@link
    * AgentConfigurationDocumentTest}) and pre-approved on Claude wherever it is attached, because the
    * bearer on each call already decides what it may do.
    */
@@ -1626,15 +1437,14 @@ class AgentLaunchServiceProjectHostTest {
     private AgentMcpServers withQits() {
       return scope ->
           List.of(
-              new ScopedMcp("repository", "http://qits:8080/projects/mcp?projectId=" + PROJECT, List.of()),
               new ScopedMcp("qits", "http://dev-qits-platform-access-mcp-service:8080/mcp", List.of()));
     }
 
     @Test
     void claudeRendersItWithAHeadersHelperAndPreApprovesEveryTool() {
-      // The defect this covers: a daemon hands the library an ordinary ScopedMcp(key "qits", url) —
-      // the same shape as "repository" — and the library alone has to know this one key needs a
-      // headers helper rather than a bare url, because the central server answers 401 with nothing
+      // The defect this covers: a daemon hands the library an ordinary ScopedMcp(key "qits", url),
+      // and the library alone has to know this one key needs a headers helper rather than a bare
+      // url, because the central server answers 401 with nothing
       // in the --mcp-config to say why.
       AgentLaunchService service = serviceWith(withQits());
       AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
@@ -1656,10 +1466,6 @@ class AgentLaunchServiceProjectHostTest {
 
     @Test
     void anAutonomousRunLeavesTheQitsUrlUnmarked() {
-      // Every OTHER built-in gets ?agentReadOnly=true on an unattended run; qits has no such filter
-      // (the host's ReadOnlyRepositoryToolFilter has nothing to do with the central server) and the
-      // caller's own bearer is what actually fences a call, so marking the url would be decoration
-      // with nothing behind it.
       AgentLaunchService service = serviceWith(withQits());
       AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
 
@@ -1669,31 +1475,13 @@ class AgentLaunchServiceProjectHostTest {
                   AgentMcpScope.PROJECT, AgentSurface.EPIC_AUTONOMOUS, pinned, AgentType.CLAUDE)
               .script();
 
-      assertTrue(
-          script.contains(
-              "\"qits\":{\"type\":\"http\",\"url\":\""
-                  + "http://dev-qits-platform-access-mcp-service:8080/mcp\",\"headersHelper\""),
-          "qits carries no agentReadOnly marker: " + script);
-      assertFalse(
-          script.contains("dev-qits-platform-access-mcp-service:8080/mcp?agentReadOnly"), script);
-      assertTrue(
-          script.contains(
-              "\"repository\":{\"type\":\"http\",\"url\":\""
-                  + "http://qits:8080/projects/mcp?projectId="
-                  + PROJECT
-                  + "&agentReadOnly=true\""),
-          "every other built-in still gets marked: " + script);
+      assertFalse(script.contains("agentReadOnly"), script);
     }
 
     private AgentMcpServers withQitsAndABearer() {
       Map<String, String> bearer = Map.of("Authorization", "Bearer t");
       return scope ->
           List.of(
-              new ScopedMcp(
-                  "repository",
-                  "http://qits:8080/projects/mcp?projectId=" + PROJECT,
-                  List.of(),
-                  bearer),
               new ScopedMcp(
                   "qits", "http://dev-qits-platform-access-mcp-service:8080/mcp", List.of(), bearer));
     }
@@ -1719,12 +1507,6 @@ class AgentLaunchServiceProjectHostTest {
           script);
       assertFalse(script.contains("headersHelper"), script);
       assertTrue(script.contains("--allowedTools 'mcp__qits__*'"), script);
-      assertTrue(
-          script.contains(
-              "\"repository\":{\"type\":\"http\",\"url\":\"http://qits:8080/projects/mcp?projectId="
-                  + PROJECT
-                  + "&agentReadOnly=true\",\"headers\":{\"Authorization\":\"Bearer t\"}}"),
-          "the read-only marking keeps the header: " + script);
     }
 
     @Test
@@ -1753,16 +1535,14 @@ class AgentLaunchServiceProjectHostTest {
               .map(server -> server.name())
               .toList();
 
-      assertEquals(
-          List.of("repository={Authorization=Bearer t}", "qits={Authorization=Bearer t}"), attached);
-      assertEquals(List.of("repository"), withoutAttached);
+      assertEquals(List.of("qits={Authorization=Bearer t}"), attached);
+      assertEquals(List.of(), withoutAttached);
     }
 
     @Test
     void aSurfaceWithNoQitsServerRendersNoAllowedTools() {
-      // MCP_SERVERS (the projects daemon's real mapping, below) does not attach qits yet — that is
-      // wired in a later task — so this host's launches render no --allowedTools at all today.
-      AgentLaunchService service = service();
+      AgentLaunchService service =
+          serviceWith(new ProjectHostMcpServers(Optional.empty(), Map.of()));
       AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
 
       String script =
@@ -1811,7 +1591,7 @@ class AgentLaunchServiceProjectHostTest {
       assertFalse(record.getBoolean("activityTracking"));
       assertTrue(record.getBoolean("configured"), "this container was born with a document");
       assertEquals(
-          "repository", record.getJsonArray("mcpServers").getJsonObject(0).getString("server"));
+          "qits", record.getJsonArray("mcpServers").getJsonObject(0).getString("server"));
       assertFalse(record.getJsonArray("mcpServers").getJsonObject(0).getBoolean("readOnly"));
       assertEquals(0, record.getJsonArray("externalMcpServers").size());
     }
@@ -2169,14 +1949,14 @@ class AgentLaunchServiceProjectHostTest {
     }
 
     @Test
-    void anUnattendedRunRecordsThatItsServersWereFenced() {
+    void anUnattendedRunRecordsItsServersUnfenced() {
+      // No url fence any more (qits-1174): the qits server is scoped by the caller's bearer.
       Command command = service().launchAutonomous("Composed run");
       JsonObject record = new JsonObject(command.agentLaunchRecord());
 
       assertEquals("epic.autonomous", record.getString("surface"));
-      assertTrue(
-          record.getJsonArray("mcpServers").getJsonObject(0).getBoolean("readOnly"),
-          "the fence is part of what it ran with");
+      assertEquals("qits", record.getJsonArray("mcpServers").getJsonObject(0).getString("server"));
+      assertFalse(record.getJsonArray("mcpServers").getJsonObject(0).getBoolean("readOnly"));
     }
 
     @Test
@@ -2247,7 +2027,12 @@ class AgentLaunchServiceProjectHostTest {
 
     @Test
     void scopedServersRideSessionNewWithBareToolNames() {
-      AgentLaunchService service = service();
+      // Kimi gets qits only with fixed headers (qits-625), so this host carries one.
+      AgentLaunchService service =
+          serviceWith(
+              new ProjectHostMcpServers(
+                  Optional.of(ProjectHostMcpServers.PLATFORM_URL),
+                  Map.of("Authorization", "Bearer t")));
       AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.KIMI);
 
       AcpSessionConfig config = service.buildAcpSessionConfig(AgentMcpScope.REPOSITORY, AgentSurface.PROJECT_WORK, pinned);
@@ -2255,11 +2040,10 @@ class AgentLaunchServiceProjectHostTest {
       assertEquals("/workspace", config.cwd());
       assertEquals(1, config.mcpServers().size());
       AcpSessionConfig.AcpMcpServer server = config.mcpServers().get(0);
-      assertEquals("repository", server.name());
-      assertTrue(
-          server.enabledTools().contains("taskPrompt"),
+      assertEquals("qits", server.name());
+      assertFalse(
+          server.enabledTools().stream().anyMatch(tool -> tool.startsWith("mcp__")),
           "kimi takes bare names, not the mcp__server__ form: " + server.enabledTools());
-      assertFalse(server.enabledTools().contains("mcp__repository__taskPrompt"));
     }
 
     @Test
@@ -2279,17 +2063,6 @@ class AgentLaunchServiceProjectHostTest {
                   AgentMcpScope.REPOSITORY, AgentSurface.PROJECT_WORK, service.pinSession(null, false, AgentType.KIMI))
               .resumeSessionId());
     }
-
-    @Test
-    void theAutonomousVariantMarksTheUrlsReadOnly() {
-      AgentLaunchService service = service();
-      AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.KIMI);
-
-      AcpSessionConfig config =
-          service.buildAcpSessionConfig(AgentMcpScope.REPOSITORY, AgentSurface.PROJECT_WORK, pinned, true);
-
-      assertTrue(config.mcpServers().get(0).url().contains("agentReadOnly=true"));
-    }
   }
 
   // --- rendering from the configuration -----------------------------------------------------
@@ -2306,30 +2079,19 @@ class AgentLaunchServiceProjectHostTest {
     /** This host's two surfaces, seeded from its own serversFor and its own tool list. */
     private AgentSurfaceConfigurations seeded() {
       return new SeededConfigurationDocument()
-          // PROJECT scope: ?projectId=<id>, no narrowing beyond it.
           .surface(
               AgentSurface.PROJECT_WORK,
               true,
               "",
               SeededConfigurationDocument.server(
-                  "repository",
-                  true,
-                  false,
-                  false,
-                  false,
-                  ProjectHostMcpServers.READ_ONLY_REPOSITORY_TOOLS))
-          // The composed run: the same server, read-only marked, steered to delegate.
+                  "qits", false, false, false, false, List.of("mcp__qits__*")))
+          // The composed run: the same server, steered to delegate.
           .surface(
               AgentSurface.EPIC_AUTONOMOUS,
               true,
               AgentLaunchService.COMPOSED_RUN_PROMPT,
               SeededConfigurationDocument.server(
-                  "repository",
-                  true,
-                  true,
-                  false,
-                  true,
-                  ProjectHostMcpServers.READ_ONLY_REPOSITORY_TOOLS))
+                  "qits", false, false, false, false, List.of("mcp__qits__*")))
           .configurations();
     }
 
@@ -2366,10 +2128,8 @@ class AgentLaunchServiceProjectHostTest {
     }
 
     @Test
-    void theComposedRunRendersItsFenceFromEitherSide() {
-      // The autonomous shape marks every url read-only, and the seeded epic.autonomous row carries
-      // readOnly too. The two must agree rather than one overriding the other, or turning the store
-      // on would double-mark or un-mark an unattended run.
+    void theComposedRunRendersTheSameFromEitherSide() {
+      // No url fence any more (qits-1174): the qits server is scoped by the caller's bearer.
       AgentLaunchService service = service();
       AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
 
@@ -2388,7 +2148,7 @@ class AgentLaunchServiceProjectHostTest {
               .script();
 
       assertEquals(constants, configured);
-      assertEquals(1, configured.split("agentReadOnly=true", -1).length - 1);
+      assertFalse(configured.contains("agentReadOnly"), configured);
     }
 
     @Test
@@ -2655,8 +2415,7 @@ class AgentLaunchServiceProjectHostTest {
     @Test
     void aServerThisDaemonDoesNotServeAtThisScopeRefusesTheLaunch() {
       // Dropping it silently is the green-while-dead shape: the session looks entirely normal and
-      // simply cannot do half its job. This host serves one server; observability is the workspace
-      // daemon's.
+      // simply cannot do half its job. Retired servers are the one exception, and this is not one.
       AgentLaunchService service = service();
       AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
 
@@ -2667,7 +2426,7 @@ class AgentLaunchServiceProjectHostTest {
                   true,
                   "",
                   SeededConfigurationDocument.server(
-                      "observability", false, true, true, false, List.of()))
+                      "telemetry", false, false, false, false, List.of()))
               .configurations();
 
       InvalidCommandRequestException refusal =
@@ -2677,7 +2436,7 @@ class AgentLaunchServiceProjectHostTest {
                   service.renderChat(
                       AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK, pinned, AgentType.CLAUDE));
 
-      assertTrue(refusal.getMessage().contains("observability"), refusal.getMessage());
+      assertTrue(refusal.getMessage().contains("telemetry"), refusal.getMessage());
       assertTrue(refusal.getMessage().contains("project.work"), refusal.getMessage());
     }
 

@@ -27,14 +27,9 @@ import java.util.regex.Pattern;
  * CodingAgent}, spawned through {@link AgentCommands}, and returned as a {@link Command} — so an
  * agent session shows up in the Commands list and is attachable and terminable like any other.
  *
- * <p><strong>It no longer owns the MCP scope→URL construction.</strong> Both daemons had a copy of
- * this class with its own {@code serversFor} switch — one server on the projects side, three on the
- * workspace side, with different narrowing and different pre-approval lists — and that switch was
- * the largest single reason the two copies could not simply be merged. It is now {@link
- * AgentMcpServers}, supplied by the host, and this class renders whatever it is handed: attaching
- * each server, marking URLs read-only for an autonomous run, and stripping the Claude tool prefix
- * for Kimi. What survives here is the safety rule the URLs are subject to — see {@link
- * AgentMcpIds}, which an implementation is expected to call.
+ * <p>The MCP servers come from the host's {@link AgentMcpServers}: the central {@code qits} server
+ * and the host's in-container servers. This class renders whatever it is handed, plus the surface's
+ * external catalog servers.
  *
  * <p><strong>What the move into the container removed.</strong> The host version had twelve injected
  * collaborators spanning five sibling domains. Inside the container:
@@ -44,8 +39,7 @@ import java.util.regex.Pattern;
  *       CheckoutContext} and the rest is the host's own business;
  *   <li>{@code WorkspaceService.ensureContainer} is gone at all three call sites: the daemon is the
  *       container, and a running daemon is proof of it;
- *   <li>{@code RepositoryRepository} is gone — the project id is an environment value, see {@link
- *       McpEndpoints};
+ *   <li>{@code RepositoryRepository} is gone — the project id is an environment value;
  *   <li>{@code QitsHostResolver} is gone — the daemon dialled qits, so it knows the address;
  *   <li>{@code WorkspacePromptDraftService} is gone — there is no draft store here, so the request
  *       carries the prompt and {@code deliverTaskPrompt} is taken at its word;
@@ -68,10 +62,9 @@ public final class AgentLaunchService {
 
   /**
    * The one-sentence bootstrap turn pushed in place of the composed prompt: it carries the user's
-   * authority ("do this"), while the {@code taskPrompt} MCP tool carries the content (the refined
-   * markdown + attached images). Trivially deliverable in every launch shape — argv for interactive
-   * and autonomous, a stream-json turn for chat — which is the whole point of the push→fetch
-   * inversion (an image can't ride an argv or a PTY keystroke, but it rides a tool result).
+   * authority ("do this"), while the work item, read through the {@code qits} server, carries the
+   * content. Trivially deliverable in every launch shape — argv for interactive and autonomous, a
+   * stream-json turn for chat.
    *
    * <p>The shipped default, and the one place the two copies of this class disagreed on a
    * <em>literal</em>: the projects copy said "for this project", the workspace copy "for this
@@ -82,8 +75,8 @@ public final class AgentLaunchService {
    * earlier.
    */
   public static final String TASK_PROMPT_BOOTSTRAP =
-      "Fetch the current task prompt for this workspace with the taskPrompt tool, then implement"
-          + " what it describes.";
+      "Read the work item this workspace is for with the qits MCP server's work_details tool, then"
+          + " implement what it describes.";
 
   /**
    * The steering the {@code project.tickets} launch used to carry, appended to the harness's own
@@ -575,9 +568,8 @@ public final class AgentLaunchService {
 
   /**
    * Spawns an autonomous agent run as a <strong>chat</strong> command that <strong>fetches</strong>
-   * its task over MCP: the narrowed repository server is attached (read-only marked) and the seed
-   * turn is the {@link #TASK_PROMPT_BOOTSTRAP}, so the run reads the composed draft via
-   * {@code taskPrompt}. Riding the chat pipeline — instead of a one-shot {@code claude -p}, which
+   * its task over MCP: the seed turn is the surface's initial prompt, or the {@link
+   * #TASK_PROMPT_BOOTSTRAP}, and the run reads its work item through the {@code qits} server. Riding the chat pipeline — instead of a one-shot {@code claude -p}, which
    * printed nothing until it exited — renders the run as a live conversation on its command page, and
    * a human can follow up in the same session once the autonomous turn finishes.
    */
@@ -591,7 +583,7 @@ public final class AgentLaunchService {
 
     PinnedSession pinned = pinSession(null, false, type);
     // Its own surface rather than the epics desk's. This is a different session from a human's
-    // epics chat — read-only marked servers, a bootstrap seed, nobody watching — and it has always
+    // epics chat — a bootstrap seed, nobody watching — and it has always
     // deserved its own key; borrowing the desk's was what there was before there were surfaces.
     Rendered rendered =
         renderedAutonomousChat(
@@ -603,7 +595,7 @@ public final class AgentLaunchService {
                 new AcpChatProtocol(
                     process,
                     buildAcpSessionConfig(
-                        AgentMcpScope.REPOSITORY, AgentSurface.EPIC_AUTONOMOUS, pinned, true))
+                        AgentMcpScope.REPOSITORY, AgentSurface.EPIC_AUTONOMOUS, pinned))
             : claudeChatProtocol(
                 pinned,
                 AgentSurface.EPIC_AUTONOMOUS,
@@ -625,7 +617,7 @@ public final class AgentLaunchService {
     trackRenameable(command.id(), AgentSurface.EPIC_AUTONOMOUS);
     transcriptTail.startTail(command.id(), type);
     // The bootstrap rides stdin as the first user turn (a chat only speaks over stdin); the agent
-    // then pulls the real composed prompt back over MCP via taskPrompt. It is this surface's
+    // then reads its work item over MCP. It is this surface's
     // configured initial prompt when the document carries one, and the host's own sentence when it
     // does not — see initialPrompt.
     commands.chatSend(
@@ -750,7 +742,7 @@ public final class AgentLaunchService {
    * <p>This is where {@link #TASK_PROMPT_BOOTSTRAP} and the initial prompt meet, and the resolution
    * is that they are the same field one release apart. The sentence {@code epic.autonomous} and
    * {@code ticket.dispatch} push today <em>is</em> an initial prompt: one line, per surface, carrying
-   * the user's authority while {@code taskPrompt} carries the content. So the store seeds it as
+   * the user's authority while the work item carries the content. So the store seeds it as
    * those two surfaces' initial prompt — each with its own daemon's noun, "this project" and "this
    * workspace", because harmonising two live literals would change what one of them pushes on the
    * day the store ships — and a configured value simply wins here.
@@ -1007,7 +999,7 @@ public final class AgentLaunchService {
   /** {@link #renderChat} with the launch record beside it. */
   Rendered renderedChat(
       AgentMcpScope scope, AgentSurface surface, PinnedSession pinned, AgentType agentType) {
-    return render(scope, surface, pinned, agentType, false, false, null);
+    return render(scope, surface, pinned, agentType, false, null);
   }
 
   /**
@@ -1079,19 +1071,9 @@ public final class AgentLaunchService {
    */
   AcpSessionConfig buildAcpSessionConfig(
       AgentMcpScope scope, AgentSurface surface, PinnedSession pinned) {
-    return buildAcpSessionConfig(scope, surface, pinned, false);
-  }
-
-  /**
-   * {@link #buildAcpSessionConfig} with the autonomous read-only marking: {@code readOnly} appends
-   * the {@code agentReadOnly} marker to each server URL so the mutating repository tools are fenced —
-   * the ACP counterpart of {@link #renderAutonomousChat}'s URL marking.
-   */
-  AcpSessionConfig buildAcpSessionConfig(
-      AgentMcpScope scope, AgentSurface surface, PinnedSession pinned, boolean readOnly) {
     AgentSurfaceConfiguration configuration = configurationFor(surface);
     List<AcpSessionConfig.AcpMcpServer> servers = new ArrayList<>();
-    List<ScopedMcp> attached = attachedServers(scope, configuration, readOnly);
+    List<ScopedMcp> attached = attachedServers(scope, configuration).servers();
     for (ScopedMcp server : attached) {
       // The central qits server only with fixed headers (qits-625): Kimi has no headers helper, so
       // without a header the server would only ever answer 401 — a dead tool, not a missing one.
@@ -1132,9 +1114,7 @@ public final class AgentLaunchService {
   }
 
   /**
-   * Renders the autonomous run as a stream-json chat: the {@code scope} MCP servers attached (so
-   * {@code taskPrompt} is reachable), the credential overlay and skip-permissions — like {@link
-   * #renderChat}, but with each server URL read-only marked.
+   * Renders the autonomous run as a stream-json chat — the same render as {@link #renderChat}.
    */
   LaunchSpec renderAutonomousChat(
       AgentMcpScope scope, AgentSurface surface, PinnedSession pinned, AgentType agentType) {
@@ -1144,15 +1124,7 @@ public final class AgentLaunchService {
   /** {@link #renderAutonomousChat} with the launch record beside it. */
   Rendered renderedAutonomousChat(
       AgentMcpScope scope, AgentSurface surface, PinnedSession pinned, AgentType agentType) {
-    return render(scope, surface, pinned, agentType, false, true, null);
-  }
-
-  /**
-   * Appends the read-only marker query parameter to an MCP URL. The name must match {@code
-   * ReadOnlyRepositoryToolFilter.READ_ONLY_PARAM} on the host.
-   */
-  private static String readOnlyMarked(String url) {
-    return url + (url.contains("?") ? "&" : "?") + "agentReadOnly=true";
+    return render(scope, surface, pinned, agentType, false, null);
   }
 
   /**
@@ -1176,23 +1148,14 @@ public final class AgentLaunchService {
       String initialContext,
       PinnedSession pinned,
       AgentType agentType) {
-    return render(scope, surface, pinned, agentType, true, false, initialContext);
+    return render(scope, surface, pinned, agentType, true, initialContext);
   }
 
   /**
    * The one render, and the one place a launch record is built from what it rendered.
    *
-   * <p>The three shapes were three copies of the same six lines with one difference each: a chat
-   * calls {@code chat()}, an interactive launch calls {@code start()} and carries an argv seed, and
-   * an autonomous run marks every server url read-only. Recording what a launch ran with is the
-   * change that made keeping them apart untenable — a record built in three places is three records
-   * that can disagree about the same session.
-   *
-   * <p>{@code unattended} is the autonomous run's fence: nobody is watching a composed run's first
-   * turn under skip-permissions, so every server url is read-only marked and the host's tool filter
-   * hides the mutating repository tools. The fence is the union of the run's shape and the
-   * configuration's own {@code readOnly} flag — the two composed surfaces are seeded with it set, so
-   * the two agree rather than one overriding the other.
+   * <p>A chat calls {@code chat()}; an interactive launch calls {@code start()} and carries an argv
+   * seed. One render means one launch record, so the record cannot disagree with what ran.
    */
   private Rendered render(
       AgentMcpScope scope,
@@ -1200,19 +1163,14 @@ public final class AgentLaunchService {
       PinnedSession pinned,
       AgentType agentType,
       boolean interactive,
-      boolean unattended,
       String initialContext) {
     AgentSurfaceConfiguration configuration = configurationFor(surface);
     CodingAgent agent = CodingAgentFactory.ofType(agentType);
-    List<ScopedMcp> attached = attachedServers(scope, configuration, unattended);
+    Attached resolved = attachedServers(scope, configuration);
+    List<ScopedMcp> attached = resolved.servers();
     for (ScopedMcp server : attached) {
-      // Deliberately without agent.allowedTools: no launch shape renders --allowedTools today (every
-      // one of them skips permissions, which makes a pre-approval list moot), and the built-ins'
-      // lists reach a session through the per-server channels instead — Kimi's enabledTools on the
-      // ACP session. Adding them here would move a rendered command line this epic promised not to
-      // move.
-      // TWO exceptions for the central `qits` platform server (qits-630, owner-decided), Claude
-      // only — Kimi gets this server only with fixed headers (qits-625), see buildAcpSessionConfig:
+      // Two rules for the central `qits` platform server (qits-630, owner-decided), Claude only —
+      // Kimi gets this server only with fixed headers (qits-625), see buildAcpSessionConfig:
       if (agentType == AgentType.CLAUDE && QITS_MCP_KEY.equals(server.key())) {
         // it carries the host's fixed headers when there are any (a RUNNER workspace's non-expiring
         // token, qits-625), and otherwise a headers helper rather than a plain url, so Claude fetches
@@ -1227,12 +1185,8 @@ public final class AgentLaunchService {
         // not do, and a surface that prompts should not stop a session on its first qits tool call.
         agent.allowedTools(QITS_PRE_APPROVED_TOOLS);
       } else {
-        // Deliberately without agent.allowedTools for every other built-in: no launch shape renders
-        // --allowedTools today (every one of them skips permissions, which makes a pre-approval list
-        // moot), and the built-ins' lists reach a session through the per-server channels instead —
-        // Kimi's enabledTools on the ACP session. Adding them here would move a rendered command line
-        // this epic promised not to move.
-        // Fixed headers from the host, when it supplies any (qits-625); none renders as before.
+        // Any other platform server a host may still hand over, with its fixed headers (qits-625).
+        // Its list reaches Kimi through enabledTools; on Claude every shape skips permissions.
         agent.mcpServer(server.key(), McpServers.httpMcp(server.url(), server.headers()));
       }
     }
@@ -1265,7 +1219,7 @@ public final class AgentLaunchService {
     LaunchSpec spec = interactive ? rendered.start() : rendered.chat();
     return new Rendered(
         spec,
-        launchRecord(configuration, agentType, rendered, attached, interactive),
+        launchRecord(configuration, agentType, rendered, resolved, interactive),
         // The header values this render just interpolated into the script — the host's fixed
         // headers on its own servers and the catalog's credentials. The command is stored with them
         // replaced; the process is spawned with the script as rendered.
@@ -1279,20 +1233,17 @@ public final class AgentLaunchService {
   }
 
   /**
-   * What the harness could not render, plus what the <em>host</em> could not: a daemon that has not
-   * adopted {@link AgentMcpServers#serverFor} addressed the attached servers as its scope mapping
-   * builds them, whatever narrowing the document asked for. Recorded rather than silent, because
-   * "which server was this session actually talking to" is precisely what a launch record is for —
-   * and it disappears from every record the day both daemons implement the seam.
+   * What the harness could not render, plus the attachments this launch skipped — a retired server
+   * a stored surface still names, or {@code qits} in a container with no address for it. Recorded
+   * rather than silent, because "which servers did this session have" is what a launch record is
+   * for.
    */
-  private List<String> notes(AgentSurfaceConfiguration configuration, CodingAgent rendered) {
-    if (!configuration.attachesConfiguredServers() || mcpServers.honoursNarrowing()) {
+  private static List<String> notes(CodingAgent rendered, Attached attached) {
+    if (attached.notes().isEmpty()) {
       return rendered.renderNotes();
     }
     List<String> notes = new ArrayList<>(rendered.renderNotes());
-    notes.add(
-        "This daemon does not yet honour per-attachment MCP narrowing, so the attached servers were"
-            + " addressed as its own scope mapping builds them.");
+    notes.addAll(attached.notes());
     return List.copyOf(notes);
   }
 
@@ -1306,13 +1257,12 @@ public final class AgentLaunchService {
       AgentSurfaceConfiguration configuration,
       AgentType agentType,
       CodingAgent rendered,
-      List<ScopedMcp> attached,
+      Attached attached,
       boolean interactive) {
     List<AgentLaunchRecord.AttachedServer> servers = new ArrayList<>();
-    for (ScopedMcp server : attached) {
-      servers.add(
-          new AgentLaunchRecord.AttachedServer(
-              server.key(), server.url().contains("agentReadOnly=true")));
+    for (ScopedMcp server : attached.servers()) {
+      // Never read-only: no platform server takes the old url fence any more (qits-1174).
+      servers.add(new AgentLaunchRecord.AttachedServer(server.key(), false));
     }
     if (agentType == AgentType.CLAUDE) {
       for (LocalMcp server : mcpServers.localServers()) {
@@ -1342,7 +1292,7 @@ public final class AgentLaunchService {
         // and a header value has no business in any of those.
         configuration.externalMcpServerKeys(),
         !configuration.shipped(),
-        notes(configuration, rendered));
+        notes(rendered, attached));
   }
 
   /**
@@ -1436,66 +1386,72 @@ public final class AgentLaunchService {
         .resolve(surface, defaults.defaultAgentType(), defaults.activityTrackingEnabled());
   }
 
+  /** The platform servers a launch attaches, and why any the surface named were left out. */
+  record Attached(List<ScopedMcp> servers, List<String> notes) {}
+
   /**
-   * The MCP servers this launch attaches — <b>the line this epic draws through the MCP wiring</b>.
+   * The platform MCP servers this launch attaches. The host says how a key becomes a url; the
+   * surface's configuration says which keys attach, in what order, with which pre-approval.
    *
-   * <p>The host's {@link AgentMcpServers} still says how a server key becomes a url at a given
-   * {@link AgentMcpScope}: that needs the container's own project, repository and workspace ids,
-   * which this library deliberately does not have, and inventing a url here is the one failure this
-   * module refuses outright (see {@link McpEndpoints#mcpUrl}). The <b>configuration</b> says which of
-   * those servers attach, in what order, with which pre-approval, and whether they are fenced.
-   * Policy from the document, addressing from the host.
+   * <p>A configuration that names no servers takes the host's whole list. One that names servers
+   * gets them in its order, with two exceptions that skip rather than refuse, each noted in the
+   * launch record:
    *
-   * <p>A configuration that attaches nothing of its own — the shipped fallback — takes the host's
-   * whole mapping, which is exactly what every launch did before this existed. A configuration that
-   * names a server the host does not serve at this scope <b>refuses the launch</b> rather than
-   * dropping it: a session missing a server it was configured with looks entirely normal and simply
-   * cannot do half its job, which is the failure shape this estate calls green-while-dead.
+   * <ul>
+   *   <li>a retired server ({@link AgentConfigurationDocument#RETIRED_SERVER_KEYS}): stored surfaces
+   *       still name them until qits-projects-service cleans them up, and that must not stop
+   *       launches;
+   *   <li>{@code qits} when the host has no address for it ({@code QITS_PLATFORM_MCP_URL} unset):
+   *       it is the only platform server, so refusing would stop every launch on that host.
+   * </ul>
    *
-   * <p>An attachment with an empty pre-approval list takes the host's shipped one. Pre-approval
-   * lists are not operator-editable in v1 — they are policy about what this product's agents may do
-   * without asking, keyed by server — so an empty list means "the shipped one", not "approve
-   * nothing".
+   * <p>Any other key the host does not serve still refuses the launch: a session missing a server it
+   * was configured with looks normal and simply cannot do its job.
    *
-   * <p>{@code narrowProject}/{@code narrowRepository}/{@code narrowWorkspace} are not honoured here
-   * and cannot be until the host seam maps a key <em>plus a narrowing</em> to a url; they are the
-   * editor's description of what the host already builds, and today's seeded values are exactly
-   * that. See {@link AgentMcpAttachment}.
+   * <p>An attachment with an empty pre-approval list takes the host's shipped one.
    */
-  private List<ScopedMcp> attachedServers(
-      AgentMcpScope scope, AgentSurfaceConfiguration configuration, boolean unattended) {
+  @SuppressWarnings("deprecation")
+  private Attached attachedServers(AgentMcpScope scope, AgentSurfaceConfiguration configuration) {
     if (!configuration.attachesConfiguredServers()) {
-      List<ScopedMcp> hosted = mcpServers.serversFor(scope);
-      return unattended ? hosted.stream().map(AgentLaunchService::markReadOnly).toList() : hosted;
+      return new Attached(List.copyOf(mcpServers.serversFor(scope)), List.of());
     }
     List<ScopedMcp> attached = new ArrayList<>();
+    List<String> notes = new ArrayList<>();
     for (AgentMcpAttachment attachment : configuration.mcpServers()) {
-      // Narrowed as the document asks, by the host — which is the only side that can, because a
-      // narrowed url needs the container's own ids. A host that has not adopted the seam answers its
-      // scope mapping unchanged, and the launch record says the addressing was the host's.
+      String key = attachment.server();
+      if (AgentConfigurationDocument.RETIRED_SERVER_KEYS.contains(
+          key.toLowerCase(java.util.Locale.ROOT))) {
+        notes.add(
+            "Skipped the '" + key + "' MCP server: it is retired, and 'qits' replaces it.");
+        continue;
+      }
+      Optional<ScopedMcp> hosted =
+          mcpServers.serverFor(key, scope, AgentMcpNarrowing.of(attachment));
+      if (hosted.isEmpty() && QITS_MCP_KEY.equals(key)) {
+        notes.add(
+            "Skipped the 'qits' MCP server: this container has no address for it"
+                + " (QITS_PLATFORM_MCP_URL is not set).");
+        continue;
+      }
       ScopedMcp server =
-          mcpServers
-              .serverFor(attachment.server(), scope, AgentMcpNarrowing.of(attachment))
-              .orElseThrow(
-                  () ->
-                      new InvalidCommandRequestException(
-                          "The "
-                              + configuration.surface()
-                              + " configuration attaches the '"
-                              + attachment.server()
-                              + "' MCP server, which this daemon does not serve at scope "
-                              + scope));
-      ScopedMcp resolved =
+          hosted.orElseThrow(
+              () ->
+                  new InvalidCommandRequestException(
+                      "The "
+                          + configuration.surface()
+                          + " configuration attaches the '"
+                          + key
+                          + "' MCP server, which this daemon does not serve"));
+      attached.add(
           new ScopedMcp(
               server.key(),
               server.url(),
               attachment.allowedTools().isEmpty()
                   ? server.allowedTools()
                   : attachment.allowedTools(),
-              server.headers());
-      attached.add(unattended || attachment.readOnly() ? markReadOnly(resolved) : resolved);
+              server.headers()));
     }
-    return List.copyOf(attached);
+    return new Attached(List.copyOf(attached), List.copyOf(notes));
   }
 
   /**
@@ -1505,7 +1461,7 @@ public final class AgentLaunchService {
    * reach a container from an older service, from a hand-edited mount, or from a store that learned
    * the rule after the row was written. The failure it prevents is the one that is invisible — both
    * harnesses render <em>one</em> key-to-config object, so an external entry keyed {@code
-   * repository} does not attach twice, it displaces the platform's own server, and the session looks
+   * qits} does not attach twice, it displaces the platform's own server, and the session looks
    * entirely normal while talking to somebody else's. That is worth refusing a launch over.
    *
    * <p>It also refuses a key that collides with a built-in this launch is actually attaching, which
@@ -1535,22 +1491,6 @@ public final class AgentLaunchService {
       }
     }
     return external;
-  }
-
-  /**
-   * The same server with its url read-only marked — except {@link #QITS_MCP_KEY}, left alone. The
-   * marker is {@code ReadOnlyRepositoryToolFilter}'s own query parameter, read by the per-service
-   * hosts this epic is replacing; the central server has no such filter and would simply ignore the
-   * parameter, so appending it would be inert decoration that reads as a fence where there is none.
-   * What actually fences a qits call is the caller's own bearer — an autonomous run's credential
-   * already can't do anything the session itself couldn't — so there is nothing for this method to
-   * add for that key.
-   */
-  private static ScopedMcp markReadOnly(ScopedMcp server) {
-    return QITS_MCP_KEY.equals(server.key())
-        ? server
-        : new ScopedMcp(
-            server.key(), readOnlyMarked(server.url()), server.allowedTools(), server.headers());
   }
 
   /**
@@ -1596,16 +1536,13 @@ public final class AgentLaunchService {
    * ticket session into the epics list. That agreement is gone — a command reports {@code
    * agentSurface} and the frontend sorts by it (task 46e32cb3 deleted the match) — so <b>nothing
    * parses this name any more and it is free to change</b>. The {@code " (tickets desk)"} branch
-   * this method special-cased for {@code project.tickets} is gone with the key itself (qits-404):
-   * every surface now renders the plain scope-derived name below.
+   * this method special-cased for {@code project.tickets} is gone with the key itself (qits-404).
+   * The scope suffix ("(repository MCP)") went with the per-service servers (qits-1174): every
+   * surface now renders the plain harness label.
    */
   private static String harnessName(
       AgentMcpScope scope, AgentSurface surface, String harnessLabel) {
-    return switch (scope) {
-      case ACTIONS -> harnessLabel + " (actions + repository MCP)";
-      case REPOSITORY -> harnessLabel + " (repository MCP)";
-      case PROJECT -> harnessLabel + " (project MCP)";
-    };
+    return harnessLabel;
   }
 
   private String requireUuid(String value, String label) {

@@ -59,22 +59,29 @@ public record AgentConfigurationDocument(
   public static final int CURRENT_VERSION = 2;
 
   /**
-   * The keys the platform's own MCP servers are registered under. Reserved: an external entry taking
-   * one of these would not attach twice, it would silently displace the platform's server in the one
-   * key-to-config object both harnesses render — and the session would look entirely normal while
-   * talking to somebody else's repository server.
+   * The keys an external catalog entry may not take. An external entry under one of these would not
+   * attach twice; it would silently replace the platform's server in the one key-to-config object
+   * both harnesses render.
    *
-   * <p><b>{@code qits} joined 2026-10 (qits-630)</b>: the central platform-access MCP server — the
-   * {@code qits} CLI served over HTTP — renders under this key in every container, so an external
-   * entry taking it would displace the one server whose tools are pre-approved on every surface
-   * ({@code mcp__qits__*}) with a catalog server nobody vetted for that.
+   * <p>{@code qits} is the central platform-access MCP server (qits-630), the only platform server
+   * since qits-1174. The {@link #RETIRED_SERVER_KEYS} stay reserved for now: stored surfaces and
+   * daemons on an older library still use those names, and an external entry under one of them
+   * would collide there. Free them once both are cleaned up.
    *
-   * <p>The store validates this on write ({@code AgentMcpCatalog.requireCatalogKey}); it is checked
+   * <p>The store checks this on write ({@code AgentMcpCatalog.requireCatalogKey}); it is checked
    * again here, at boot, and once more at render, because a document can reach a container from an
-   * older service and this is the one collision whose failure is invisible.
+   * older service.
    */
   public static final List<String> RESERVED_SERVER_KEYS =
       List.of("repository", "actions", "observability", "qits");
+
+  /**
+   * The per-service platform MCP servers retired by qits-1174. A stored surface that still attaches
+   * one is not refused: the launch skips it and says so in its launch record, because the stored
+   * surfaces are cleaned up in a later release.
+   */
+  public static final List<String> RETIRED_SERVER_KEYS =
+      List.of("repository", "actions", "observability");
 
   public AgentConfigurationDocument {
     surfaces = surfaces == null ? Map.of() : Map.copyOf(surfaces);
@@ -303,7 +310,7 @@ public record AgentConfigurationDocument(
       if (keys.contains(key)) {
         // Not a merge, a refusal. Both harnesses render one key-to-config object — Claude's
         // --mcp-config and Kimi's ACP session/new list — so a repeated key does not attach twice,
-        // it silently displaces, and a session talking to the wrong 'repository' server looks
+        // it silently displaces, and a session talking to the wrong server looks
         // entirely normal. The reserved-key check the external catalog needs (task c7a985bd) is
         // this same rule with a second list to check against.
         throw invalid(origin, where + ".server", "attaches '" + key + "' a second time");

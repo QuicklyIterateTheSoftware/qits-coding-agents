@@ -40,10 +40,8 @@ import java.util.Optional;
  * AgentMcpScope} is refused, because a misspelled surface that silently fell through to a default
  * would be a misconfigured caller that looks like a working one.
  *
- * <p><b>Beside {@link AgentMcpScope}, never folded into it.</b> The scope is <em>addressing</em> —
- * how narrow the MCP urls are, a runtime choice of the caller — and the surface is <em>what the
- * session is for</em>. Both axes cross freely: a tickets desk can be narrowed to one repository, and
- * narrowing to a repository must not quietly change what the agent is steered at.
+ * <p>Separate from {@link AgentMcpScope}, which callers still send but which no longer picks any
+ * servers (qits-1174). The surface is <em>what the session is for</em>.
  */
 public record AgentSurface(String key) {
 

@@ -37,29 +37,22 @@ interface the host implements:
 | Seam | What the host answers |
 | --- | --- |
 | `CheckoutContext` | The branch and commit currently checked out. Nothing else — a daemon's own identity (project id, repo id, workspace id) is its own business, and it declares its own interface extending this one. |
-| `AgentMcpServers` | `serversFor(AgentMcpScope)` — which MCP servers a scope attaches, each already narrowed, each with its pre-approval list — and `serverFor(key, scope, narrowing)`, which answers one server narrowed as a surface's configuration asks. The second is what a host must implement to honour the editor's narrowing checkboxes; until it does, `honoursNarrowing()` is false and every launch that attaches servers records that its addressing was the host's. |
+| `AgentMcpServers` | `serversFor(scope)` — the platform MCP servers a launch attaches: the central `qits` server when the host has an address for it (`QITS_PLATFORM_MCP_URL`), else none — and `serverFor(key, …)`, one server by key for a surface's configuration. The scope and narrowing parameters are ignored and stay only for compatibility (qits-1174). |
 | `AgentMcpServers.localServers()` | Servers that run as a process inside the agent's own container (`LocalMcp`: a key, a command the image ships, a pre-approval list), rendered as `{"type":"stdio","command":…}` after the url servers. Empty by default. Claude only: Kimi's ACP session carries url servers alone. The workspace daemon attaches the image's browser this way. |
-| `McpEndpoints` | Where an MCP server lives, and which project this container serves. |
 | `AgentDefaults` | The instance-level preferences a launch falls back on: default harness, activity tracking, refinement model — and, since the configuration epic, the mounted per-surface configuration document (`surfaceConfigurations()`, read once at boot from a path the host passes in) and the container's own ambient facts (`ambientFacts()`, which fill an initial prompt's `{{epic}}`/`{{workspace}}`/`{{ticket}}`). |
 | `ActionResolver` | The action table, read from the checkout's own `.qits-config.yml`. |
 | `AgentCommands` | The command-launching surface `AgentLaunchService` spawns through. |
 
-`AgentMcpServers` is the one worth reading twice. The two daemons' mappings are not variations on a
-theme — the projects daemon attaches **one** server (`repository`, because a project agent's job is
-the plan), the workspace daemon attaches **three** (`repository` + `observability`, plus `actions`
-on the `ACTIONS` scope), with different narrowing and different pre-approval lists in a different
-order. Neither is a default the other could fall back on. So the mapping is the host's, and
-`AgentLaunchService` renders whatever it is handed: it attaches each server, marks the URLs
-read-only for an autonomous run, and strips the `mcp__<key>__` prefix for Kimi.
+Since qits-1174 agents get **one** platform MCP server, `qits` — the central platform-access MCP
+server, scoped by the caller's own bearer — plus whatever runs inside the container (the workspace
+image's browser). The per-service servers `repository`, `observability` and `actions` are retired.
+`AgentMcpScope`, `AgentMcpNarrowing`, `AgentMcpIds` and `McpEndpoints` remain only so hosts built
+against older versions still compile; the first two still sit on the launch wire.
 
-The pre-approval lists travel with the mapping for the same reason. They are not a property of the
-harness; they are a policy about what this product's agents may do without asking. The library keeps
-only the rule those URLs are subject to — `AgentMcpIds.requireId`, because a scoped URL ends up
-inside a single-quoted shell argument and the renderer does no escaping of its own.
-
-Both hosts' mappings are reproduced as fixtures in this repository's test scope
-(`ProjectHostMcpServers`, `WorkspaceHostMcpServers`) so that both daemons' rendered commands stay
-asserted byte for byte **here**, where the harness now lives.
+`AgentLaunchService` renders whatever the host hands it: it attaches each server and strips the
+`mcp__<key>__` prefix for Kimi. Both hosts are reproduced as fixtures in this repository's test
+scope (`ProjectHostMcpServers`, `WorkspaceHostMcpServers`) so their rendered commands stay asserted
+**here**, where the harness lives.
 
 ## What a session runs as
 
@@ -99,38 +92,27 @@ Three of those knobs are worth a sentence each:
   surface by the store; the host's own sentence stays as the fallback for a container with no
   document.
 
-The line through the MCP wiring is worth stating, because it crosses the `AgentMcpServers` seam:
+The **document** says which platform servers attach, in which order, with which pre-approval; the
+**host** says how a key becomes a url. A configured attachment that names a key the host does not
+serve **refuses the launch** — a session missing a server it was configured with looks normal and
+cannot do its job — with two exceptions that are skipped and noted on the launch record instead: a
+retired server (`AgentConfigurationDocument.RETIRED_SERVER_KEYS`), which stored surfaces still name
+until qits-projects cleans them up, and `qits` on a host with no address for it. The attachment's
+`narrow*` and `readOnly` flags are still read but change nothing.
 
-- the **document** says which servers attach, in which order, with which pre-approval, and whether
-  they are read-only fenced. Policy, edited in one place, travelling with the container;
-- the **host** says how a server key becomes a url at a given `AgentMcpScope`. Addressing, needing
-  the container's own project/repository/workspace ids, which this library deliberately does not
-  have.
-
-So a configured attachment is looked up in what the host offers for the launch's scope. A
-configuration naming a server the host does not serve at that scope **refuses the launch** rather
-than dropping it silently — a session missing a server it was configured with looks entirely normal
-and simply cannot do half its job. The attachment's `narrow*` flags cross the same seam, through
-`AgentMcpServers.serverFor(key, scope, narrowing)`: the host builds the url with exactly the
-narrowing the document asked for, in the canonical `projectId`, `repositoryId`, `workspaceId` order,
-refusing a narrowing it cannot satisfy rather than dropping the parameter. Its default
-implementation ignores the narrowing and answers the scope's own mapping, so a daemon that has not
-adopted the seam keeps rendering what it rendered — flagged, not silent: `honoursNarrowing()` is
-false and each such launch records a note saying its addressing was the host's rather than the
-document's.
-
-Beside the platform's own three servers, a surface can attach **external MCP servers** from the
+Beside the platform's own server, a surface can attach **external MCP servers** from the
 catalog qits-projects holds. They arrive in the document fully rendered — url and header value
 already resolved, so a container needs no second lookup — and they render into Claude's single
 `--strict-mcp-config --mcp-config` object and onto Kimi's ACP `session/new`, after the built-ins,
 because both harnesses interpolate the serialized form into a shell argument the suites assert
 literally. Three rules travel with them:
 
-- `repository`, `actions`, `observability` and `qits` are **reserved**, checked again at render and
-  not only at the store's write door. An external entry under one of those names does not attach
-  twice, it displaces the platform's own server in the one key-to-config object, and the session looks
-  entirely normal while talking to somebody else's. `qits` (qits-630) is the central platform-access
-  MCP server — the `qits` CLI served over HTTP — rendered with a `headersHelper`
+- `qits` and the retired `repository`, `actions` and `observability` are **reserved**, checked again
+  at render and not only at the store's write door. An external entry under one of those names does
+  not attach twice, it displaces the platform's own server in the one key-to-config object, and the
+  session looks entirely normal while talking to somebody else's. The retired names stay reserved
+  until stored surfaces and older daemons stop using them. `qits` (qits-630) is the central
+  platform-access MCP server — the `qits` CLI served over HTTP — rendered with a `headersHelper`
   (`McpServers.httpMcpWithHeadersHelper`, interim until qits-684) and pre-approved on Claude
   (`mcp__qits__*`);
 - a **header value is never stored**. The process is spawned with the script as rendered; the command
@@ -140,7 +122,7 @@ literally. Three rules travel with them:
   stdio command.
 
 Each launch **records what it ran with** on the command — surface, harness, model, effort, permission
-mode, remote control, activity tracking, the attached servers with their fences, and whatever the
+mode, remote control, activity tracking, the attached servers, and whatever the
 harness could not render. That is what makes "a container keeps the document it was born with, and an
 edit applies to the next container" a safe rule rather than an opaque one: the store can be edited at
 any time, so a session that behaved oddly last week is unreadable off anything else.

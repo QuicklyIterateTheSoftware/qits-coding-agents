@@ -53,7 +53,10 @@ public record AgentLaunchRecord(
     boolean configured,
     List<String> notes) {
 
-  /** One attached platform server as the launch rendered it: which, and whether it was fenced. */
+  /**
+   * One attached server as the launch rendered it. {@code readOnly} is always false since the url
+   * fence retired (qits-1174); the field stays because stored records and readers carry it.
+   */
   public record AttachedServer(String server, boolean readOnly) {}
 
   public AgentLaunchRecord {

@@ -17,12 +17,9 @@ import java.util.Optional;
  * comes from somewhere honest rather than from a table copied out of qits-projects:
  *
  * <ul>
- *   <li>the <b>MCP servers</b> are {@code null}, meaning "whatever the host attaches for this
- *       launch's scope". A shipped attachment table could not be right for both hosts — the projects
- *       daemon attaches one server, the workspace daemon three, with different narrowing and
- *       differently ordered pre-approval lists — and a library that shipped one of them would be a
- *       library that knows which product it is inside, which is the thing {@link AgentMcpServers}
- *       exists to prevent;
+ *   <li>the <b>MCP servers</b> are {@code null}, meaning "whatever the host attaches" — the host
+ *       knows whether it has an address for the {@code qits} server and which in-container servers
+ *       its image ships, and the library does not;
  *   <li>the <b>activity tracking</b> flag is the host's daemon-wide setting, passed in, because that
  *       is the value a container with no document has always used;
  *   <li>the <b>harness</b> is the host's default for the same reason;

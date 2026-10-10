@@ -8,8 +8,8 @@ package eu.wohlben.qits.agents;
  *
  * <pre>{@code
  * LaunchSpec spec = CodingAgentFactory.ofType(AgentType.CLAUDE)
- *     .mcpServer("actions", McpServers.httpMcp(scopedUrl))
- *     .allowedTools(READ_ONLY_ACTION_TOOLS)
+ *     .mcpServer("browser", McpServers.stdioMcp("qits-browser-mcp"))
+ *     .allowedTools(List.of("mcp__browser__*"))
  *     .start();
  * }</pre>
  */
