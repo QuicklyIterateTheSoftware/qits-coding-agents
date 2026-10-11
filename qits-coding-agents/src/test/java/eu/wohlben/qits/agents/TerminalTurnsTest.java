@@ -19,10 +19,10 @@ class TerminalTurnsTest {
   }
 
   @Test
-  void theKeystrokesAreOneLineAndOneCarriageReturn() {
+  void theTextIsOneLineWithoutTheEnter() {
     assertArrayEquals(
-        "first\\nsecond\r".getBytes(StandardCharsets.UTF_8),
-        TerminalTurns.keystrokes("first\nsecond"));
+        "first\\nsecond".getBytes(StandardCharsets.UTF_8), TerminalTurns.text("first\nsecond"));
+    assertArrayEquals(new byte[] {'\r'}, TerminalTurns.enter());
   }
 
   @Test

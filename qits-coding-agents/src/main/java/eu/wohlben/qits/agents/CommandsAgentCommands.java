@@ -66,10 +66,9 @@ public final class CommandsAgentCommands implements AgentCommands {
 
   @Override
   public boolean sendKeystrokes(String commandId, String text) {
-    // A carriage return rather than a newline: that is what a terminal sends for Enter, and what the
-    // attached xterm.js writes on the same channel. The turn's own newlines become literal "\n", so
-    // it stays one turn (TerminalTurns).
-    return registry.input(commandId, TerminalTurns.keystrokes(text));
+    // The turn's own newlines become literal "\n", so it stays one turn, and the Enter follows as
+    // a write of its own (TerminalTurns).
+    return registry.input(commandId, TerminalTurns.text(text)) && submit(commandId);
   }
 
   @Override
@@ -79,7 +78,26 @@ public final class CommandsAgentCommands implements AgentCommands {
 
   @Override
   public GuardedInput sendKeystrokesUnlessDraft(String commandId, String text) {
-    return registry.inputUnlessDraft(commandId, TerminalTurns.keystrokes(text));
+    GuardedInput typed = registry.inputUnlessDraft(commandId, TerminalTurns.text(text));
+    if (typed == GuardedInput.WRITTEN && !submit(commandId)) {
+      return GuardedInput.NOT_RUNNING;
+    }
+    return typed;
+  }
+
+  /**
+   * The Enter after a typed turn, {@link TerminalTurns#SUBMIT_PAUSE} later. Written with the text, a
+   * TUI reads it as part of a paste and leaves the turn in the input line. False when the session
+   * ended in between.
+   */
+  private boolean submit(String commandId) {
+    try {
+      Thread.sleep(TerminalTurns.SUBMIT_PAUSE);
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      return false;
+    }
+    return registry.input(commandId, TerminalTurns.enter());
   }
 
   @Override

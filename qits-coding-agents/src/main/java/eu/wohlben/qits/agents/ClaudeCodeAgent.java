@@ -3,6 +3,7 @@ package eu.wohlben.qits.agents;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import java.nio.file.Path;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -18,6 +19,9 @@ import java.util.Map;
  * literal, a classpath resource, a request body — without a side file.
  */
 public class ClaudeCodeAgent extends CodingAgent {
+
+  /** Set on the interactive harness, so it does not ask whether to trust the agent's folder. */
+  static final String SANDBOXED = "CLAUDE_CODE_SANDBOXED";
 
   @Override
   public LaunchSpec start() {
@@ -41,7 +45,13 @@ public class ClaudeCodeAgent extends CodingAgent {
       command.append(" --remote-control ").append(shellQuote(remoteControlName));
     }
     appendFlags(command);
-    return new LaunchSpec(command.toString(), true, environment);
+    // The interactive TUI asks whether to trust a folder it has not seen, before it reads the seed
+    // turn. Every agent worktree is a new folder, so every launch would wait on that question. The
+    // harness runs in a workspace container, which is the sandbox; CLAUDE_CODE_SANDBOXED tells
+    // Claude Code so, and it then trusts the folder (verified against CLI 2.1.296).
+    Map<String, String> env = new HashMap<>(environment);
+    env.put(SANDBOXED, "1");
+    return new LaunchSpec(command.toString(), true, env);
   }
 
   @Override

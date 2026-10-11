@@ -25,6 +25,13 @@ class HarnessKnobsTest {
   class Claude {
 
     @Test
+    void theInteractiveHarnessDoesNotAskToTrustItsFolder() {
+      // Every agent worktree is a folder the TUI has not seen; without this it waits on the trust
+      // question before it reads the seed turn.
+      assertEquals("1", claude().start().environment().get("CLAUDE_CODE_SANDBOXED"));
+    }
+
+    @Test
     void theModelAndTheEffortRideEveryShape() {
       // The model was already supported and only one refinement flow ever set it; the effort flag is
       // new and no launch passed it before this. Both belong on every shape a surface can be.

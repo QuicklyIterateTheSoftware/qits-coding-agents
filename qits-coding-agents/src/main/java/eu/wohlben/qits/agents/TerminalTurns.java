@@ -1,6 +1,7 @@
 package eu.wohlben.qits.agents;
 
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.regex.Pattern;
 
 /**
@@ -10,6 +11,10 @@ import java.util.regex.Pattern;
  * arrive as several turns, the first cut off mid-sentence. So each newline ({@code \r\n}, {@code
  * \n} or a lone {@code \r}) becomes the two characters backslash and {@code n}, the whole turn is
  * one line, and one carriage return submits it.
+ *
+ * <p>The carriage return is a write of its own, {@link #SUBMIT_PAUSE} after the text. A TUI reads
+ * text that arrives in one burst as a paste, and a carriage return inside a paste is part of it:
+ * the turn would sit in the input line, not sent.
  *
  * <p>Every other control character is a keystroke too: ESC starts a terminal sequence, Ctrl-C
  * interrupts, Ctrl-U clears the line, Tab completes. A turn can carry text from outside (comments,
@@ -37,8 +42,16 @@ public final class TerminalTurns {
     return NEWLINE.matcher(plain).replaceAll("\\\\n");
   }
 
-  /** The bytes to write to the PTY: the turn on one line, then the carriage return that submits. */
-  public static byte[] keystrokes(String text) {
-    return (oneLine(text) + "\r").getBytes(StandardCharsets.UTF_8);
+  /** The key that submits a turn: a carriage return, what a terminal sends for Enter. */
+  public static byte[] enter() {
+    return new byte[] {'\r'};
+  }
+
+  /** How long after the text the {@link #enter} is written, so it is not read as part of a paste. */
+  public static final Duration SUBMIT_PAUSE = Duration.ofMillis(300);
+
+  /** The text to write to the PTY: the turn on one line, without the {@link #enter}. */
+  public static byte[] text(String text) {
+    return oneLine(text).getBytes(StandardCharsets.UTF_8);
   }
 }
