@@ -29,8 +29,8 @@
          io.vertx.core.json.
 
          WHAT THE HOST DAEMON SUPPLIES, rather than this library knowing it: the ambient identity of
-         the checkout (CheckoutContext), the scope-to-MCP-server mapping with its narrowing and its
-         pre-approval lists (AgentMcpServers), where the MCP servers are (McpEndpoints), the
+         the checkout (CheckoutContext), the MCP servers and their
+         pre-approval lists (AgentMcpServers), the
          instance defaults (AgentDefaults), and the action table (ActionResolver). Everything else
          is here.
 

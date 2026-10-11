@@ -6,10 +6,10 @@ import java.util.List;
  * One platform MCP server as a surface's configuration attaches it: which server, and the tools
  * pre-approved on it. The wire half of {@code AgentMcpAttachmentDto} in qits-projects-service.
  *
- * <p>Since qits-1174 the only platform server is {@code qits}. The narrowing flags are still read
- * from the document but change nothing: {@code qits} takes no url scope. {@code readOnly} appends
- * {@code agentReadOnly=true}, which the central server enforces. An attachment that still
- * names a retired server ({@link AgentConfigurationDocument#RETIRED_SERVER_KEYS}) is skipped at
+ * <p>Since qits-1174 the only platform server is {@code qits}. The narrowing flags stay on the wire
+ * and are still read from the document, but change nothing: {@code qits} takes no url scope.
+ * {@code readOnly} appends {@code agentReadOnly=true}, which the central server enforces. An
+ * attachment that still names a retired server ({@link AgentConfigurationDocument#RETIRED_SERVER_KEYS}) is skipped at
  * launch.
  *
  * @param server the server key, {@code qits}

@@ -1430,7 +1430,6 @@ public final class AgentLaunchService {
    * <p>{@code unattended}, or an attachment's own {@code readOnly}, read-only marks the url — see
    * {@link #markReadOnly}.
    */
-  @SuppressWarnings("deprecation")
   private Attached attachedServers(
       AgentMcpScope scope, AgentSurfaceConfiguration configuration, boolean unattended) {
     if (!configuration.attachesConfiguredServers()) {
@@ -1451,8 +1450,7 @@ public final class AgentLaunchService {
             "Skipped the '" + key + "' MCP server: it is retired, and 'qits' replaces it.");
         continue;
       }
-      Optional<ScopedMcp> hosted =
-          mcpServers.serverFor(key, scope, AgentMcpNarrowing.of(attachment));
+      Optional<ScopedMcp> hosted = mcpServers.serverFor(key, scope);
       if (hosted.isEmpty() && QITS_MCP_KEY.equals(key)) {
         notes.add(
             "Skipped the 'qits' MCP server: this container has no address for it"

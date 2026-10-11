@@ -1193,13 +1193,11 @@ class AgentLaunchServiceProjectHostTest {
     }
   }
 
-  // --- the narrowing seam -----------------------------------------------------------------------
+  // --- skipped attachments ----------------------------------------------------------------------
 
   /**
-   * {@code narrowProject}/{@code narrowRepository}/{@code narrowWorkspace} were read, validated and
-   * then not rendered: the library cannot build a narrowed url without ids it must not know. They
-   * are now the host's to honour, through {@link AgentMcpServers#serverFor}, and a host that has not
-   * adopted the seam says so on every launch that attaches servers rather than looking as if it had.
+   * An attachment the host cannot serve: a retired server, or {@code qits} on a host with no address
+   * for it. The launch goes on without it, and the record says so.
    */
   @Nested
   class SkippedAttachments {

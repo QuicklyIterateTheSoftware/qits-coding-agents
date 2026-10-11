@@ -26,24 +26,9 @@ public interface AgentMcpServers {
    * One platform server by key, for a surface's configuration that names it. Answer {@link
    * java.util.Optional#empty()} for a key this host does not serve, or for {@code qits} when it has
    * no address for it. The default answers from {@link #serversFor}.
-   *
-   * @param narrowing ignored; see {@link AgentMcpNarrowing}
    */
-  @SuppressWarnings("deprecation")
-  default java.util.Optional<ScopedMcp> serverFor(
-      String key, AgentMcpScope scope, AgentMcpNarrowing narrowing) {
+  default java.util.Optional<ScopedMcp> serverFor(String key, AgentMcpScope scope) {
     return serversFor(scope).stream().filter(server -> server.key().equals(key)).findFirst();
-  }
-
-  /**
-   * Whether {@link #serverFor} honoured per-attachment url narrowing.
-   *
-   * @deprecated since qits-1174: no server takes url narrowing any more, and the library no longer
-   *     reads this. Kept so hosts that override it still compile.
-   */
-  @Deprecated
-  default boolean honoursNarrowing() {
-    return false;
   }
 
   /**

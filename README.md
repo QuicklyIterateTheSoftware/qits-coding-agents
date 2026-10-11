@@ -37,7 +37,7 @@ interface the host implements:
 | Seam | What the host answers |
 | --- | --- |
 | `CheckoutContext` | The branch and commit currently checked out. Nothing else — a daemon's own identity (project id, repo id, workspace id) is its own business, and it declares its own interface extending this one. |
-| `AgentMcpServers` | `serversFor(scope)` — the platform MCP servers a launch attaches: the central `qits` server when the host has an address for it (`QITS_PLATFORM_MCP_URL`), else none — and `serverFor(key, …)`, one server by key for a surface's configuration. The scope and narrowing parameters are ignored and stay only for compatibility (qits-1174). |
+| `AgentMcpServers` | `serversFor(scope)` — the platform MCP servers a launch attaches: the central `qits` server when the host has an address for it (`QITS_PLATFORM_MCP_URL`), else none — and `serverFor(key, …)`, one server by key for a surface's configuration. The scope parameter is ignored and stays only because `AgentMcpScope` is on the launch wire (qits-1174). |
 | `AgentMcpServers.localServers()` | Servers that run as a process inside the agent's own container (`LocalMcp`: a key, a command the image ships, a pre-approval list), rendered as `{"type":"stdio","command":…}` after the url servers. Empty by default. Claude only: Kimi's ACP session carries url servers alone. The workspace daemon attaches the image's browser this way. |
 | `AgentDefaults` | The instance-level preferences a launch falls back on: default harness, activity tracking, refinement model — and, since the configuration epic, the mounted per-surface configuration document (`surfaceConfigurations()`, read once at boot from a path the host passes in) and the container's own ambient facts (`ambientFacts()`, which fill an initial prompt's `{{epic}}`/`{{workspace}}`/`{{ticket}}`). |
 | `ActionResolver` | The action table, read from the checkout's own `.qits-config.yml`. |
@@ -46,8 +46,7 @@ interface the host implements:
 Since qits-1174 agents get **one** platform MCP server, `qits` — the central platform-access MCP
 server, scoped by the caller's own bearer — plus whatever runs inside the container (the workspace
 image's browser). The per-service servers `repository`, `observability` and `actions` are retired.
-`AgentMcpScope`, `AgentMcpNarrowing`, `AgentMcpIds` and `McpEndpoints` remain only so hosts built
-against older versions still compile; `AgentMcpScope` still sits on the launch wire.
+`AgentMcpScope` remains only because it sits on the launch wire.
 
 `AgentLaunchService` renders whatever the host hands it: it attaches each server, read-only marks
 the URLs (`agentReadOnly=true`) for an autonomous run or a `readOnly` attachment, and strips the
