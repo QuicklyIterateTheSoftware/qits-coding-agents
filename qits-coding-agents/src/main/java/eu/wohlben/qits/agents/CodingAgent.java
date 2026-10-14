@@ -116,6 +116,20 @@ public abstract class CodingAgent {
    */
   protected boolean activityTracking;
 
+  /**
+   * Whether an interactive launch wires the work-item affordances: the {@code MessageDisplay} hook
+   * that links work keys, the work-items status line and the footer links. Off by default, like
+   * {@link #activityTracking}; the launch path sets it from {@link AgentDefaults#workLinksEnabled()}.
+   * Only a harness with an interactive surface that understands them renders anything for it.
+   */
+  protected boolean workLinks;
+
+  /** The project slugs whose {@code <slug>-<n>} keys become footer links. Never null. */
+  protected List<String> workLinkProjects = List.of();
+
+  /** The platform domain the footer links' landing URL is derived from, or null for none. */
+  protected String platformDomain;
+
   /** Attaches an MCP server under {@code key} with a harness-agnostic {@link McpServers} config. */
   public CodingAgent mcpServer(String key, JsonObject config) {
     this.mcpServers.put(key, config);
@@ -252,6 +266,33 @@ public abstract class CodingAgent {
    */
   public CodingAgent activityTracking(boolean on) {
     this.activityTracking = on;
+    return this;
+  }
+
+  /**
+   * Wires the work-item affordances into an interactive launch: a hook that turns work keys in the
+   * transcript into links, a status line listing the session's work items, and one footer link
+   * pattern per project slug, pointing at {@code https://qits.<domain>/projects/<slug>/work/detail/}.
+   * Off by default; the launch path sets it from {@link AgentDefaults}. One-off runs and chats never
+   * render it — there is nobody looking at a footer.
+   *
+   * @param enabled whether to wire them at all
+   * @param projectSlugs the project slugs whose keys are linked; null, blank and repeated entries
+   *     are dropped. Empty leaves the footer links out while the hook and status line stay
+   * @param domain the platform domain, or null/blank to leave the footer links out
+   */
+  public CodingAgent workLinks(boolean enabled, Collection<String> projectSlugs, String domain) {
+    this.workLinks = enabled;
+    java.util.LinkedHashSet<String> slugs = new java.util.LinkedHashSet<>();
+    if (projectSlugs != null) {
+      for (String slug : projectSlugs) {
+        if (slug != null && !slug.isBlank()) {
+          slugs.add(slug.trim());
+        }
+      }
+    }
+    this.workLinkProjects = List.copyOf(slugs);
+    this.platformDomain = domain == null || domain.isBlank() ? null : domain.trim();
     return this;
   }
 

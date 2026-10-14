@@ -152,4 +152,51 @@ public interface AgentDefaults {
   default Optional<String> entityStatus() {
     return Optional.empty();
   }
+
+  /**
+   * Whether interactive Claude launches carry the work-item affordances — the {@code MessageDisplay}
+   * hook that links work keys, the work-items status line and the footer links ({@link
+   * CodingAgent#workLinks}). On by default: the affordances only call the {@code qits} CLI the image
+   * already carries, so a host that has adopted nothing still gets them, and a host that must not
+   * (an image without the CLI, an operator who wants the bare REPL) answers {@code false}. A default
+   * method, for the released-artifact reason.
+   */
+  default boolean workLinksEnabled() {
+    return true;
+  }
+
+  /**
+   * The project slugs whose {@code <slug>-<n>} keys an interactive launch turns into footer links.
+   * Called once per launch, so a host whose answer can change answers the current one, and a host
+   * that has to look it up caches it — {@link WorkLinkProjects} is that cache for the platform's
+   * project list. Empty leaves the footer links out while the hook and status line stay.
+   *
+   * <p>The default answers the project of {@link #entityId()}: a qualified id is {@code
+   * <project-slug>-<number>}, so {@code qits-1204} names {@code qits} and {@code my-proj-12} names
+   * {@code my-proj}. That way a host that has adopted nothing but the entity id still links its own
+   * project's keys, which are the ones its sessions mention most; a host that knows more — every
+   * project on the estate — overrides this and answers the union. An entity id that is absent or
+   * not of that shape answers nothing rather than a guess.
+   *
+   * <p>The host's for the same reason {@link #entityId()} is: which projects exist is a thing the
+   * platform knows, and a library that held a slug would be a library that knows which product it is
+   * inside.
+   */
+  default java.util.List<String> workLinkProjects() {
+    return entityId()
+        .map(String::trim)
+        .filter(id -> id.matches("[a-z0-9][a-z0-9-]*-\\d+"))
+        .map(id -> java.util.List.of(id.replaceFirst("-\\d+$", "")))
+        .orElse(java.util.List.of());
+  }
+
+  /**
+   * The platform domain ({@code QITS_DOMAIN}), from which the footer links' landing URL {@code
+   * https://qits.<domain>} is derived; empty when the host does not know it, and the footer links are
+   * then left out rather than pointed somewhere guessed. A default answering {@link
+   * Optional#empty()}, for the released-artifact reason.
+   */
+  default Optional<String> platformDomain() {
+    return Optional.empty();
+  }
 }

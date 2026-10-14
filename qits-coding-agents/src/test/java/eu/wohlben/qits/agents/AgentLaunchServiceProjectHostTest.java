@@ -98,6 +98,12 @@ class AgentLaunchServiceProjectHostTest {
 
   private Optional<String> entityStatus;
 
+  /** The work-links answers; unset ({@code null}) leaves the interface's defaults in charge. */
+  private Boolean workLinks;
+
+  private List<String> workLinkProjects;
+  private Optional<String> platformDomain;
+
   @BeforeEach
   void setUp() {
     commands = new Commands();
@@ -110,6 +116,9 @@ class AgentLaunchServiceProjectHostTest {
     entityBlocked = false;
     entityTitle = Optional.empty();
     entityStatus = Optional.empty();
+    workLinks = null;
+    workLinkProjects = null;
+    platformDomain = null;
   }
 
   // --- fakes ------------------------------------------------------------------------------------
@@ -374,6 +383,23 @@ class AgentLaunchServiceProjectHostTest {
           public Optional<String> entityStatus() {
             return entityStatus;
           }
+
+          @Override
+          public boolean workLinksEnabled() {
+            return workLinks == null ? AgentDefaults.super.workLinksEnabled() : workLinks;
+          }
+
+          @Override
+          public List<String> workLinkProjects() {
+            return workLinkProjects == null
+                ? AgentDefaults.super.workLinkProjects()
+                : workLinkProjects;
+          }
+
+          @Override
+          public Optional<String> platformDomain() {
+            return platformDomain == null ? AgentDefaults.super.platformDomain() : platformDomain;
+          }
         };
     CommandStore store = new CommandStore();
     AgentTranscriptService transcripts =
@@ -520,6 +546,55 @@ class AgentLaunchServiceProjectHostTest {
       assertFalse(
           spec.environment().containsKey("HOME"), "Kimi reads KIMI_CODE_HOME, set container-wide");
       assertEquals("exec kimi acp", spec.script());
+    }
+
+    @Test
+    void anInteractiveLaunchCarriesTheHostsWorkLinks() {
+      workLinkProjects = List.of("acme", "beta");
+      platformDomain = Optional.of("example.test");
+      AgentLaunchService service = service();
+      AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
+
+      String interactive =
+          service
+              .renderInteractive(
+                  AgentMcpScope.REPOSITORY, AgentSurface.PROJECT_WORK, "go", pinned, AgentType.CLAUDE)
+              .script();
+      io.vertx.core.json.JsonObject settings = ClaudeWorkLinksTest.settingsOf(interactive);
+
+      assertTrue(settings.getJsonObject("hooks").containsKey("SessionStart"), interactive);
+      assertTrue(settings.getJsonObject("hooks").containsKey("MessageDisplay"), interactive);
+      assertTrue(settings.containsKey("statusLine"), interactive);
+      assertEquals(
+          "https://qits.example.test/projects/beta/work/detail/{key}",
+          settings.getJsonArray("footerLinksRegexes").getJsonObject(1).getString("url"));
+
+      String chat =
+          service
+              .renderChat(AgentMcpScope.REPOSITORY, AgentSurface.PROJECT_WORK, pinned, AgentType.CLAUDE)
+              .script();
+      assertFalse(chat.contains("MessageDisplay"), chat);
+      assertFalse(chat.contains("footerLinksRegexes"), chat);
+    }
+
+    @Test
+    void aHostThatTurnsWorkLinksOffGetsTheBareSettings() {
+      workLinks = false;
+      workLinkProjects = List.of("acme");
+      platformDomain = Optional.of("example.test");
+      AgentLaunchService service = service();
+      AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
+
+      String interactive =
+          service
+              .renderInteractive(
+                  AgentMcpScope.REPOSITORY, AgentSurface.PROJECT_WORK, "go", pinned, AgentType.CLAUDE)
+              .script();
+
+      assertTrue(interactive.contains("\"SessionStart\""), interactive);
+      assertFalse(interactive.contains("MessageDisplay"), interactive);
+      assertFalse(interactive.contains("statusLine"), interactive);
+      assertFalse(interactive.contains("footerLinksRegexes"), interactive);
     }
 
     @Test

@@ -952,9 +952,18 @@ public final class AgentLaunchService {
                 "SWITCHED/REPORTED are hook-reported, never a launch source");
       }
     }
-    return agent
+    agent
         .activityTracking(configuration.activityTracking())
         .sessionReporting(sessionReportUrl(pinned.commandId()));
+    // Every launch path is told; the harness decides which shapes render it (Claude: the
+    // interactive REPL only). A service built without defaults wires nothing.
+    if (defaults != null) {
+      agent.workLinks(
+          defaults.workLinksEnabled(),
+          defaults.workLinkProjects(),
+          defaults.platformDomain().orElse(null));
+    }
+    return agent;
   }
 
   /**

@@ -44,7 +44,7 @@ public class ClaudeCodeAgent extends CodingAgent {
       // claude.ai session list; see AgentRemoteControl.
       command.append(" --remote-control ").append(shellQuote(remoteControlName));
     }
-    appendFlags(command);
+    appendFlags(command, true);
     // The interactive TUI asks whether to trust a folder it has not seen, before it reads the seed
     // turn. Every agent worktree is a new folder, so every launch would wait on that question. The
     // harness runs in a workspace container, which is the sandbox; CLAUDE_CODE_SANDBOXED tells
@@ -57,7 +57,7 @@ public class ClaudeCodeAgent extends CodingAgent {
   @Override
   public LaunchSpec run(String prompt) {
     StringBuilder command = new StringBuilder("claude -p ").append(shellQuote(prompt));
-    appendFlags(command);
+    appendFlags(command, false);
     return new LaunchSpec(command.toString(), false, environment);
   }
 
@@ -73,15 +73,19 @@ public class ClaudeCodeAgent extends CodingAgent {
         new StringBuilder(
             "exec claude --print --input-format stream-json --output-format stream-json"
                 + " --include-hook-events --verbose");
-    appendFlags(command);
+    appendFlags(command, false);
     return new LaunchSpec(command.toString(), false, environment);
   }
 
   /**
    * Appends the session flags, the model, the system-prompt appendix, the MCP config, the allowlist,
-   * the session-report hook and the skip-permissions flag.
+   * the settings layer (session-report hooks, and on the interactive REPL the work-item affordances)
+   * and the skip-permissions flag.
+   *
+   * @param interactive whether this is the REPL {@link #start()} renders — the only shape with a
+   *     footer and a status line for {@link #workLinks} to put anything in
    */
-  private void appendFlags(StringBuilder command) {
+  private void appendFlags(StringBuilder command, boolean interactive) {
     validateSessionConfiguration();
     if (resumeSessionId != null) {
       command.append(" --resume ").append(resumeSessionId);
@@ -117,8 +121,12 @@ public class ClaudeCodeAgent extends CodingAgent {
     if (!allowedTools.isEmpty()) {
       command.append(" --allowedTools ").append(shellQuote(String.join(",", allowedTools)));
     }
-    if (sessionReportingUrl != null) {
-      command.append(" --settings ").append(shellQuote(activityHookSettings().encode()));
+    JsonObject settings = sessionReportingUrl != null ? activityHookSettings() : null;
+    if (interactive && workLinks) {
+      settings = withWorkLinks(settings != null ? settings : new JsonObject());
+    }
+    if (settings != null) {
+      command.append(" --settings ").append(shellQuote(settings.encode()));
     }
     if (skipPermissions) {
       command.append(" --dangerously-skip-permissions");
@@ -161,6 +169,77 @@ public class ClaudeCodeAgent extends CodingAgent {
       hooks.put("SessionEnd", group);
     }
     return new JsonObject().put("hooks", hooks);
+  }
+
+  /** The hook that turns work keys in the transcript into links; see {@link #withWorkLinks}. */
+  static final String WORK_LINKS_HOOK = "qits agents claude hook work-links";
+
+  /** The status line listing the session's work items; see {@link #withWorkLinks}. */
+  static final String WORK_ITEMS_STATUS_LINE = "qits agents claude statusline work-items";
+
+  /**
+   * Adds the work-item affordances to an interactive launch's settings layer: a {@code
+   * MessageDisplay} hook merged into whatever {@code hooks} the layer already holds, a {@code
+   * statusLine}, and — when there are project slugs and a domain to point at — one {@code
+   * footerLinksRegexes} entry per slug, linking {@code <slug>-<n>} to that work item's detail page.
+   * Both commands are the {@code qits} CLI the image carries, so nothing here knows which product
+   * it is inside: the slugs and the domain are the host's, through {@link AgentDefaults}.
+   *
+   * <p>The pattern is evaluated by the harness as a JavaScript regex, so the slug is escaped for
+   * JavaScript, not with Java's {@code \Q…\E}. The lookarounds keep a key from matching inside a
+   * longer word, a path or a URL that already links it.
+   */
+  private JsonObject withWorkLinks(JsonObject settings) {
+    JsonObject hooks = settings.getJsonObject("hooks");
+    if (hooks == null) {
+      hooks = new JsonObject();
+      settings.put("hooks", hooks);
+    }
+    hooks.put(
+        "MessageDisplay",
+        new JsonArray()
+            .add(
+                new JsonObject()
+                    .put(
+                        "hooks",
+                        new JsonArray()
+                            .add(
+                                new JsonObject()
+                                    .put("type", "command")
+                                    .put("command", WORK_LINKS_HOOK)
+                                    .put("timeout", 5)))));
+    settings.put(
+        "statusLine",
+        new JsonObject()
+            .put("type", "command")
+            .put("command", WORK_ITEMS_STATUS_LINE)
+            .put("refreshInterval", 30));
+    if (platformDomain != null && !workLinkProjects.isEmpty()) {
+      JsonArray footer = new JsonArray();
+      for (String slug : workLinkProjects) {
+        footer.add(
+            new JsonObject()
+                .put("type", "regex")
+                .put(
+                    "pattern",
+                    "(?<![\\w/.-])(?<key>" + escapeJsRegex(slug) + "-\\d+)(?![\\w-])")
+                .put(
+                    "url",
+                    "https://qits." + platformDomain + "/projects/" + slug + "/work/detail/{key}")
+                .put("label", "{key}"));
+      }
+      settings.put("footerLinksRegexes", footer);
+    }
+    return settings;
+  }
+
+  /**
+   * Escapes the JavaScript regex syntax characters, as {@code RegExp.escape} would for a slug. A
+   * {@code -} is left alone: it means nothing outside a class, and escaping it is an error under the
+   * {@code u} flag.
+   */
+  static String escapeJsRegex(String literal) {
+    return literal.replaceAll("[\\\\^$.*+?()\\[\\]{}|/]", "\\\\$0");
   }
 
   // --- the capability probe ---------------------------------------------------------------------
