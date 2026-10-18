@@ -9,6 +9,7 @@ import eu.wohlben.qits.commands.CommandRegistry;
 import eu.wohlben.qits.commands.CommandService;
 import eu.wohlben.qits.commands.CommandStore;
 import eu.wohlben.qits.commands.GuardedInput;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -66,9 +67,20 @@ public final class CommandsAgentCommands implements AgentCommands {
 
   @Override
   public boolean sendKeystrokes(String commandId, String text) {
-    // The turn's own newlines become literal "\n", so it stays one turn, and the Enter follows as
-    // a write of its own (TerminalTurns).
-    return registry.input(commandId, TerminalTurns.text(text)) && submit(commandId);
+    // The turn's own newlines become literal "\n", so it stays one turn, and it is written in
+    // TerminalTurns.CHUNK_CHARS pieces, TerminalTurns.CHUNK_PAUSE apart, so no single write and no
+    // pair of back-to-back writes reads as a paste. The Enter follows as a write of its own
+    // (TerminalTurns).
+    List<byte[]> chunks = TerminalTurns.chunks(text);
+    for (int i = 0; i < chunks.size(); i++) {
+      if (i > 0 && !pause()) {
+        return false;
+      }
+      if (!registry.input(commandId, chunks.get(i))) {
+        return false;
+      }
+    }
+    return submit(commandId);
   }
 
   @Override
@@ -78,11 +90,17 @@ public final class CommandsAgentCommands implements AgentCommands {
 
   @Override
   public GuardedInput sendKeystrokesUnlessDraft(String commandId, String text) {
-    GuardedInput typed = registry.inputUnlessDraft(commandId, TerminalTurns.text(text));
-    if (typed == GuardedInput.WRITTEN && !submit(commandId)) {
-      return GuardedInput.NOT_RUNNING;
+    List<byte[]> chunks = TerminalTurns.chunks(text);
+    GuardedInput typed = registry.inputUnlessDraft(commandId, chunks.get(0));
+    if (typed != GuardedInput.WRITTEN) {
+      return typed;
     }
-    return typed;
+    for (int i = 1; i < chunks.size(); i++) {
+      if (!pause() || !registry.input(commandId, chunks.get(i))) {
+        return GuardedInput.NOT_RUNNING;
+      }
+    }
+    return submit(commandId) ? GuardedInput.WRITTEN : GuardedInput.NOT_RUNNING;
   }
 
   /**
@@ -98,6 +116,17 @@ public final class CommandsAgentCommands implements AgentCommands {
       return false;
     }
     return registry.input(commandId, TerminalTurns.enter());
+  }
+
+  /** The {@link TerminalTurns#CHUNK_PAUSE} between two chunks of the same turn. False if interrupted. */
+  private boolean pause() {
+    try {
+      Thread.sleep(TerminalTurns.CHUNK_PAUSE);
+      return true;
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      return false;
+    }
   }
 
   @Override
