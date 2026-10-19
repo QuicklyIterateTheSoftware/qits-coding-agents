@@ -11,6 +11,7 @@ import eu.wohlben.qits.commands.Command;
 import eu.wohlben.qits.commands.CommandExitListener;
 import eu.wohlben.qits.commands.InvalidCommandRequestException;
 import eu.wohlben.qits.commands.StreamJsonChatProtocol;
+import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -531,7 +532,8 @@ public final class AgentLaunchService {
     requireSignedIn(type);
 
     PinnedSession pinned = pinSession(request.resumeSessionId(), request.fork(), type);
-    Rendered rendered = renderedChat(request.scope(), surface, pinned, type);
+    Rendered rendered =
+        renderedChat(request.scope(), surface, pinned, type, request.agentConfigDir());
     LaunchSpec spec = rendered.spec();
     // Claude drives chat over stream-json; Kimi has no stdin chat, so its chat rides an in-JVM ACP
     // client with the scoped MCP servers carried on session/new.
@@ -574,6 +576,14 @@ public final class AgentLaunchService {
    * a human can follow up in the same session once the autonomous turn finishes.
    */
   public Command launchAutonomous(String name) {
+    return launchAutonomous(name, null);
+  }
+
+  /**
+   * {@link #launchAutonomous(String)} with the run's own agent config checkout, or null for none —
+   * see {@link AgentLaunchRequest#agentConfigDir()}.
+   */
+  public Command launchAutonomous(String name, Path agentConfigDir) {
     // Composed flows carry no per-launch choice, so they resolve the default harness.
     AgentType type = defaults.defaultAgentType();
     // Nobody is watching a composed run, so a login terminal here would be the green-while-dead
@@ -587,7 +597,7 @@ public final class AgentLaunchService {
     // deserved its own key; borrowing the desk's was what there was before there were surfaces.
     Rendered rendered =
         renderedAutonomousChat(
-            AgentMcpScope.REPOSITORY, AgentSurface.EPIC_AUTONOMOUS, pinned, type);
+            AgentMcpScope.REPOSITORY, AgentSurface.EPIC_AUTONOMOUS, pinned, type, agentConfigDir);
     LaunchSpec spec = rendered.spec();
     ChatProtocolFactory protocolFactory =
         type == AgentType.KIMI
@@ -649,7 +659,12 @@ public final class AgentLaunchService {
     List<String> turns = openingTurns(configurationFor(surface), request);
     Rendered rendered =
         renderedInteractive(
-            request.scope(), surface, turns.isEmpty() ? null : turns.get(0), pinned, type);
+            request.scope(),
+            surface,
+            turns.isEmpty() ? null : turns.get(0),
+            pinned,
+            type,
+            request.agentConfigDir());
     LaunchSpec spec = rendered.spec();
     // Renameable when it asked for a bridge under a name: Claude with the knob on. Entered before
     // the spawn so an early hook has somewhere to land, and so a setEntity racing the spawn queues
@@ -1008,7 +1023,17 @@ public final class AgentLaunchService {
   /** {@link #renderChat} with the launch record beside it. */
   Rendered renderedChat(
       AgentMcpScope scope, AgentSurface surface, PinnedSession pinned, AgentType agentType) {
-    return render(scope, surface, pinned, agentType, false, false, null);
+    return renderedChat(scope, surface, pinned, agentType, null);
+  }
+
+  /** {@link #renderedChat} with the agent's own config checkout, or null for none. */
+  Rendered renderedChat(
+      AgentMcpScope scope,
+      AgentSurface surface,
+      PinnedSession pinned,
+      AgentType agentType,
+      Path agentConfigDir) {
+    return render(scope, surface, pinned, agentType, false, false, null, agentConfigDir);
   }
 
   /**
@@ -1144,7 +1169,17 @@ public final class AgentLaunchService {
   /** {@link #renderAutonomousChat} with the launch record beside it. */
   Rendered renderedAutonomousChat(
       AgentMcpScope scope, AgentSurface surface, PinnedSession pinned, AgentType agentType) {
-    return render(scope, surface, pinned, agentType, false, true, null);
+    return renderedAutonomousChat(scope, surface, pinned, agentType, null);
+  }
+
+  /** {@link #renderedAutonomousChat} with the agent's own config checkout, or null for none. */
+  Rendered renderedAutonomousChat(
+      AgentMcpScope scope,
+      AgentSurface surface,
+      PinnedSession pinned,
+      AgentType agentType,
+      Path agentConfigDir) {
+    return render(scope, surface, pinned, agentType, false, true, null, agentConfigDir);
   }
 
   /**
@@ -1168,7 +1203,18 @@ public final class AgentLaunchService {
       String initialContext,
       PinnedSession pinned,
       AgentType agentType) {
-    return render(scope, surface, pinned, agentType, true, false, initialContext);
+    return renderedInteractive(scope, surface, initialContext, pinned, agentType, null);
+  }
+
+  /** {@link #renderedInteractive} with the agent's own config checkout, or null for none. */
+  Rendered renderedInteractive(
+      AgentMcpScope scope,
+      AgentSurface surface,
+      String initialContext,
+      PinnedSession pinned,
+      AgentType agentType,
+      Path agentConfigDir) {
+    return render(scope, surface, pinned, agentType, true, false, initialContext, agentConfigDir);
   }
 
   /**
@@ -1188,7 +1234,8 @@ public final class AgentLaunchService {
       AgentType agentType,
       boolean interactive,
       boolean unattended,
-      String initialContext) {
+      String initialContext,
+      Path agentConfigDir) {
     AgentSurfaceConfiguration configuration = configurationFor(surface);
     CodingAgent agent = CodingAgentFactory.ofType(agentType);
     Attached resolved = attachedServers(scope, configuration, unattended);
@@ -1240,7 +1287,8 @@ public final class AgentLaunchService {
     if (interactive && initialContext != null && !initialContext.isBlank()) {
       agent.initialContext(initialContext);
     }
-    CodingAgent rendered = configured(agent, agentType, pinned, configuration, interactive);
+    CodingAgent rendered =
+        configured(agent, agentType, pinned, configuration, interactive, agentConfigDir);
     LaunchSpec spec = interactive ? rendered.start() : rendered.chat();
     return new Rendered(
         spec,
@@ -1335,11 +1383,16 @@ public final class AgentLaunchService {
       AgentType agentType,
       PinnedSession pinned,
       AgentSurfaceConfiguration configuration,
-      boolean interactive) {
+      boolean interactive,
+      Path agentConfigDir) {
     CodingAgent configured =
         withPermissions(
             withSteering(
-                withSession(withAgentHome(agent, agentType), pinned, configuration), configuration),
+                withSession(
+                    withAgentConfig(withAgentHome(agent, agentType), agentType, agentConfigDir),
+                    pinned,
+                    configuration),
+                configuration),
             configuration);
     // Every surface can set these; before this epic only one refinement flow could set a model and
     // nothing at all could set an effort level. Empty is the harness's own choice, which is what
@@ -1555,6 +1608,21 @@ public final class AgentLaunchService {
   private CodingAgent withAgentHome(CodingAgent agent, AgentType agentType) {
     if (agentType == AgentType.CLAUDE && claudeMount != null && !claudeMount.isBlank()) {
       agent.environment("HOME", claudeMount);
+    }
+    return agent;
+  }
+
+  /**
+   * Layers the agent's own config checkout over the shared volume: its memory, its skills and its
+   * plugin set, the last merged against the shared {@code settings.json} by {@link
+   * AgentPluginService#launchEnabledPlugins}. Claude only — Kimi has none of these seams, and a
+   * launch without a checkout renders exactly what it did before there was one.
+   */
+  private CodingAgent withAgentConfig(
+      CodingAgent agent, AgentType agentType, Path agentConfigDir) {
+    if (agentType == AgentType.CLAUDE && agentConfigDir != null) {
+      agent.agentConfig(
+          agentConfigDir, AgentPluginService.launchEnabledPlugins(claudeMount, agentConfigDir));
     }
     return agent;
   }

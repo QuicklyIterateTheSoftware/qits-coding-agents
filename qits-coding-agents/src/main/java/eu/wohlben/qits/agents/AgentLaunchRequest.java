@@ -1,6 +1,7 @@
 package eu.wohlben.qits.agents;
 
 import eu.wohlben.qits.commands.InvalidCommandRequestException;
+import java.nio.file.Path;
 
 /**
  * One agent launch as the caller asks for it.
@@ -23,6 +24,11 @@ import eu.wohlben.qits.commands.InvalidCommandRequestException;
  *     additionally gated on a stored draft existing; there is no draft store here, so the caller's
  *     word is taken — it is the one that has the draft.
  * @param agentType the harness to use, or null for the resolved default
+ * @param agentConfigDir this agent's own config checkout — {@code memory/}, {@code skills/}, a
+ *     {@code settings.json} whose {@code enabledPlugins} is all that is read, and the plugin manifest
+ *     that makes the directory a plugin — or null for none, which renders exactly what a launch
+ *     rendered before the field existed. Claude only: Kimi ignores it. Set by the host, never read
+ *     off a request body: it is a path on the container's filesystem.
  */
 public record AgentLaunchRequest(
     AgentMcpScope scope,
@@ -32,7 +38,44 @@ public record AgentLaunchRequest(
     String resumeSessionId,
     boolean fork,
     boolean deliverTaskPrompt,
-    AgentType agentType) {
+    AgentType agentType,
+    Path agentConfigDir) {
+
+  /** A launch without an agent config dir — the shape every caller had before it existed. */
+  public AgentLaunchRequest(
+      AgentMcpScope scope,
+      AgentSurface surface,
+      AgentLaunchMode mode,
+      String initialContext,
+      String resumeSessionId,
+      boolean fork,
+      boolean deliverTaskPrompt,
+      AgentType agentType) {
+    this(
+        scope,
+        surface,
+        mode,
+        initialContext,
+        resumeSessionId,
+        fork,
+        deliverTaskPrompt,
+        agentType,
+        null);
+  }
+
+  /** This request with {@code dir} as the agent's own config checkout. */
+  public AgentLaunchRequest withAgentConfigDir(Path dir) {
+    return new AgentLaunchRequest(
+        scope,
+        surface,
+        mode,
+        initialContext,
+        resumeSessionId,
+        fork,
+        deliverTaskPrompt,
+        agentType,
+        dir);
+  }
 
   public AgentLaunchMode modeOrDefault() {
     return mode == null ? AgentLaunchMode.CHAT : mode;

@@ -130,6 +130,12 @@ public abstract class CodingAgent {
   /** The platform domain the footer links' landing URL is derived from, or null for none. */
   protected String platformDomain;
 
+  /** This agent's own config checkout, or null for none; see {@link #agentConfig}. */
+  protected Path agentConfigDir;
+
+  /** The {@code enabledPlugins} layer rendered for {@link #agentConfigDir}. Never null. */
+  protected JsonObject agentEnabledPlugins = new JsonObject();
+
   /** Attaches an MCP server under {@code key} with a harness-agnostic {@link McpServers} config. */
   public CodingAgent mcpServer(String key, JsonObject config) {
     this.mcpServers.put(key, config);
@@ -293,6 +299,25 @@ public abstract class CodingAgent {
     }
     this.workLinkProjects = List.copyOf(slugs);
     this.platformDomain = domain == null || domain.isBlank() ? null : domain.trim();
+    return this;
+  }
+
+  /**
+   * Points the session at this agent's own config checkout: its auto-memory lives in {@code
+   * <dir>/memory}, the directory itself loads as a plugin (so its {@code skills/} are the agent's
+   * skills), and {@code enabledPlugins} is the plugin set the session runs with. The shared config
+   * dir on the credential volume stays as it is; this is a layer over it.
+   *
+   * <p>The plugin set is handed in already merged rather than read here, so rendering stays free of
+   * I/O — {@link AgentPluginService#launchEnabledPlugins} is what computes it. Honoured by harnesses
+   * with the seams; Kimi ignores it.
+   *
+   * @param dir the agent's config checkout, or null to render none of it
+   * @param enabledPlugins the {@code enabledPlugins} object to render, or null for an empty one
+   */
+  public CodingAgent agentConfig(Path dir, JsonObject enabledPlugins) {
+    this.agentConfigDir = dir;
+    this.agentEnabledPlugins = enabledPlugins == null ? new JsonObject() : enabledPlugins.copy();
     return this;
   }
 

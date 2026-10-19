@@ -199,12 +199,143 @@ class ContainerLocalProbesTest {
     }
 
     @Test
+    void installedIdsAreTheKeysOfTheInstalledManifest() throws IOException {
+      AgentPluginService plugins =
+          new AgentPluginService(
+              new Runner(), claudeMount.toString(), workspaceRoot, defaults(AgentType.CLAUDE, null));
+      assertTrue(plugins.installedIds().isEmpty(), "absent reads as nothing installed");
+
+      Files.createDirectories(plugins.installedPluginsPath().getParent());
+      Files.writeString(plugins.installedPluginsPath(), "{not json");
+      assertTrue(plugins.installedIds().isEmpty(), "malformed reads as nothing installed");
+
+      Files.writeString(
+          plugins.installedPluginsPath(),
+          "{\"version\":2,\"plugins\":{\"code-review@claude-plugins-official\":[{}],"
+              + "\"jdtls-lsp@claude-plugins-official\":[{}]}}");
+      assertEquals(
+          List.of("code-review@claude-plugins-official", "jdtls-lsp@claude-plugins-official"),
+          List.copyOf(plugins.installedIds()));
+    }
+
+    @Test
+    void enableForInstallsThenEnablesInTheAgentsOwnFileOnly(@TempDir Path agentConfigDir)
+        throws IOException {
+      Runner runner = new Runner();
+      AgentPluginService plugins =
+          new AgentPluginService(
+              runner, claudeMount.toString(), workspaceRoot, defaults(AgentType.CLAUDE, null));
+      Path settings = agentConfigDir.resolve("settings.json");
+      Files.writeString(
+          settings,
+          "{\"theme\":\"dark\",\"enabledPlugins\":{\"off@claude-plugins-official\":false}}");
+
+      List<InstalledPluginDto> listed = plugins.enableFor(agentConfigDir, "jdtls-lsp");
+
+      assertEquals(
+          List.of("claude", "plugin", "install", "jdtls-lsp@claude-plugins-official"),
+          runner.lastArgv());
+      io.vertx.core.json.JsonObject written =
+          new io.vertx.core.json.JsonObject(Files.readString(settings));
+      assertEquals("dark", written.getString("theme"), "other keys are kept");
+      assertEquals(
+          new io.vertx.core.json.JsonObject()
+              .put("off@claude-plugins-official", false)
+              .put("jdtls-lsp@claude-plugins-official", true),
+          written.getJsonObject("enabledPlugins"));
+      assertTrue(Files.readString(settings).contains("\n  \""), "pretty-printed");
+      assertEquals(2, listed.size());
+      assertEquals(listed, plugins.listFor(agentConfigDir));
+      assertFalse(Files.exists(plugins.settingsPath()), "the shared file is not touched");
+    }
+
+    @Test
+    void enableForCreatesAMissingFileAndRefusesABogusId(@TempDir Path agentConfigDir)
+        throws IOException {
+      Runner runner = new Runner();
+      AgentPluginService plugins =
+          new AgentPluginService(
+              runner, claudeMount.toString(), workspaceRoot, defaults(AgentType.CLAUDE, null));
+
+      assertThrows(
+          InvalidCommandRequestException.class, () -> plugins.enableFor(agentConfigDir, "../x"));
+      assertTrue(runner.argvs.isEmpty(), "validated before anything is installed");
+      assertFalse(Files.exists(agentConfigDir.resolve("settings.json")));
+
+      plugins.enableFor(agentConfigDir, "jdtls-lsp");
+
+      assertEquals(
+          List.of(new InstalledPluginDto("jdtls-lsp@claude-plugins-official", true)),
+          plugins.listFor(agentConfigDir));
+    }
+
+    @Test
+    void enableForStopsWhenTheInstallFails(@TempDir Path agentConfigDir) {
+      AgentPluginService plugins =
+          new AgentPluginService(
+              new Runner().returning(new ProcessRunner.Result(1, "", "boom", false)),
+              claudeMount.toString(),
+              workspaceRoot,
+              defaults(AgentType.CLAUDE, null));
+
+      assertThrows(IllegalStateException.class, () -> plugins.enableFor(agentConfigDir, "x"));
+      assertFalse(Files.exists(agentConfigDir.resolve("settings.json")));
+    }
+
+    @Test
+    void listForReadsTheAgentsFileLeniently(@TempDir Path agentConfigDir) throws IOException {
+      AgentPluginService plugins =
+          new AgentPluginService(
+              new Runner(), claudeMount.toString(), workspaceRoot, defaults(AgentType.CLAUDE, null));
+      assertTrue(plugins.listFor(agentConfigDir).isEmpty());
+
+      Files.writeString(agentConfigDir.resolve("settings.json"), "{not json");
+      assertTrue(plugins.listFor(agentConfigDir).isEmpty());
+    }
+
+    @Test
+    void theLaunchSetIsTheAgentsOwnWithTheSharedRestSwitchedOff(@TempDir Path agentConfigDir)
+        throws IOException {
+      Files.createDirectories(claudeMount.resolve(".claude"));
+      Files.writeString(
+          claudeMount.resolve(".claude/settings.json"),
+          "{\"enabledPlugins\":{\"a@m\":true,\"b@m\":true,\"c@m\":false}}");
+      Files.writeString(
+          agentConfigDir.resolve("settings.json"),
+          "{\"model\":\"ignored\",\"enabledPlugins\":{\"b@m\":true,\"d@m\":true}}");
+
+      assertEquals(
+          new io.vertx.core.json.JsonObject()
+              .put("b@m", true)
+              .put("d@m", true)
+              .put("a@m", false)
+              .put("c@m", false),
+          AgentPluginService.launchEnabledPlugins(claudeMount.toString(), agentConfigDir));
+    }
+
+    @Test
+    void theLaunchSetReadsMissingAndMalformedFilesAsEmpty(@TempDir Path agentConfigDir)
+        throws IOException {
+      assertTrue(
+          AgentPluginService.launchEnabledPlugins(claudeMount.toString(), agentConfigDir).isEmpty());
+
+      Files.createDirectories(claudeMount.resolve(".claude"));
+      Files.writeString(claudeMount.resolve(".claude/settings.json"), "{\"enabledPlugins\":[]}");
+      Files.writeString(agentConfigDir.resolve("settings.json"), "{not json");
+      assertTrue(
+          AgentPluginService.launchEnabledPlugins(claudeMount.toString(), agentConfigDir).isEmpty());
+    }
+
+    @Test
     void pluginsAreRefusedWhenTheDefaultHarnessIsNotClaude() {
       AgentPluginService plugins =
           new AgentPluginService(
               new Runner(), claudeMount.toString(), workspaceRoot, defaults(AgentType.KIMI, null));
 
       assertThrows(InvalidCommandRequestException.class, plugins::listInstalled);
+      assertThrows(InvalidCommandRequestException.class, () -> plugins.listFor(workspaceRoot));
+      assertThrows(
+          InvalidCommandRequestException.class, () -> plugins.enableFor(workspaceRoot, "x"));
     }
   }
 

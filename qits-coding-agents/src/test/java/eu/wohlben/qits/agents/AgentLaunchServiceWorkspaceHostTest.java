@@ -60,6 +60,9 @@ class AgentLaunchServiceWorkspaceHostTest {
   private AgentType defaultType;
   private boolean activityTracking;
 
+  /** Where the shared credential volume mounts; a temp dir where a test reads files off it. */
+  private String claudeMount;
+
   /**
    * What this container was created with. {@link AgentSurfaceConfigurations#shipped()} is a
    * container born before the configuration document existed, which is what every test but the
@@ -74,6 +77,7 @@ class AgentLaunchServiceWorkspaceHostTest {
     defaultType = AgentType.CLAUDE;
     activityTracking = true;
     configurations = AgentSurfaceConfigurations.shipped();
+    claudeMount = CLAUDE_MOUNT;
   }
 
   // --- fakes ------------------------------------------------------------------------------------
@@ -245,13 +249,13 @@ class AgentLaunchServiceWorkspaceHostTest {
             null);
     return new AgentLaunchService(
         commands,
-        new AgentAuthStatus(probe, CLAUDE_MOUNT, workspaceRoot),
+        new AgentAuthStatus(probe, claudeMount, workspaceRoot),
         transcripts,
         new AgentTranscriptTailService(transcripts, new CommandLogService(store, null)),
         defaults,
         mcpServers,
         CHECKOUT_CONTEXT,
-        CLAUDE_MOUNT,
+        claudeMount,
         HOOKS_PORT);
   }
 
@@ -513,6 +517,85 @@ class AgentLaunchServiceWorkspaceHostTest {
       assertThrows(
           InvalidCommandRequestException.class,
           () -> service().pinSession("not-a-uuid", false, AgentType.CLAUDE));
+    }
+  }
+
+  // --- the agent config dir ---------------------------------------------------------------------
+
+  @Nested
+  class AgentConfigDir {
+
+    @TempDir Path mount;
+    @TempDir Path agentConfigDir;
+
+    @BeforeEach
+    void volumes() throws java.io.IOException {
+      claudeMount = mount.toString();
+      java.nio.file.Files.createDirectories(mount.resolve(".claude"));
+      java.nio.file.Files.writeString(
+          mount.resolve(".claude/settings.json"),
+          "{\"enabledPlugins\":{\"a@claude-plugins-official\":true,"
+              + "\"b@claude-plugins-official\":true}}");
+      java.nio.file.Files.writeString(
+          agentConfigDir.resolve("settings.json"),
+          "{\"enabledPlugins\":{\"a@claude-plugins-official\":true}}");
+    }
+
+    @Test
+    void aChatRequestCarriesTheDirIntoTheOneSettingsLayer() {
+      service().launchChat(chat(AgentMcpScope.REPOSITORY).withAgentConfigDir(agentConfigDir));
+
+      String script = commands.last().script();
+      assertEquals(1, script.split(" --settings ", -1).length - 1, script);
+      io.vertx.core.json.JsonObject settings = ClaudeWorkLinksTest.settingsOf(script);
+      assertTrue(settings.getJsonObject("hooks").containsKey("SessionStart"), script);
+      assertEquals(
+          agentConfigDir.resolve("memory").toString(), settings.getString("autoMemoryDirectory"));
+      assertEquals(
+          new io.vertx.core.json.JsonObject()
+              .put("a@claude-plugins-official", true)
+              .put("b@claude-plugins-official", false),
+          settings.getJsonObject("enabledPlugins"),
+          "the shared file's plugin the agent does not name is switched off");
+      assertTrue(script.contains(" --plugin-dir '" + agentConfigDir + "'"), script);
+    }
+
+    @Test
+    void anInteractiveRequestCarriesItToo() {
+      service()
+          .launchInteractive(
+              new AgentLaunchRequest(
+                      AgentMcpScope.REPOSITORY,
+                      AgentSurface.WORKSPACE_AGENT,
+                      AgentLaunchMode.INTERACTIVE,
+                      null,
+                      null,
+                      false,
+                      false,
+                      null)
+                  .withAgentConfigDir(agentConfigDir));
+
+      assertTrue(
+          commands.last().script().contains(" --plugin-dir '" + agentConfigDir + "'"),
+          commands.last().script());
+    }
+
+    @Test
+    void kimiIgnoresTheDir() {
+      AgentLaunchService service = service();
+      AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.KIMI);
+
+      LaunchSpec spec =
+          service
+              .renderedChat(
+                  AgentMcpScope.REPOSITORY,
+                  AgentSurface.WORKSPACE_CHAT,
+                  pinned,
+                  AgentType.KIMI,
+                  agentConfigDir)
+              .spec();
+
+      assertEquals("exec kimi acp", spec.script());
     }
   }
 

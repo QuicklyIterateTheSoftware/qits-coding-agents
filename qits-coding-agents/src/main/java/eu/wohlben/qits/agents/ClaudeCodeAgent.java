@@ -79,8 +79,9 @@ public class ClaudeCodeAgent extends CodingAgent {
 
   /**
    * Appends the session flags, the model, the system-prompt appendix, the MCP config, the allowlist,
-   * the settings layer (session-report hooks, and on the interactive REPL the work-item affordances)
-   * and the skip-permissions flag.
+   * the settings layer (session-report hooks, on the interactive REPL the work-item affordances, and
+   * the agent config dir's memory and plugin set), the agent config dir as a plugin and the
+   * skip-permissions flag.
    *
    * @param interactive whether this is the REPL {@link #start()} renders — the only shape with a
    *     footer and a status line for {@link #workLinks} to put anything in
@@ -106,11 +107,16 @@ public class ClaudeCodeAgent extends CodingAgent {
       // level fails at the harness, where the answer is authoritative.
       command.append(" --effort ").append(shellQuote(effort));
     }
-    if (systemPromptAppendix != null && !systemPromptAppendix.isBlank()) {
+    String appendix = systemPromptAppendix == null ? "" : systemPromptAppendix;
+    if (agentConfigDir != null) {
+      appendix =
+          (appendix.isBlank() ? "" : appendix + "\n\n") + skillsSentence(agentConfigDir);
+    }
+    if (!appendix.isBlank()) {
       // --append-system-prompt, not --system-prompt: the harness's own prompt is what makes the
       // tools and the checkout usable, and replacing it to add a desk's steering would cost far
       // more than it buys.
-      command.append(" --append-system-prompt ").append(shellQuote(systemPromptAppendix));
+      command.append(" --append-system-prompt ").append(shellQuote(appendix));
     }
     if (!mcpServers.isEmpty()) {
       JsonObject servers = new JsonObject();
@@ -125,12 +131,37 @@ public class ClaudeCodeAgent extends CodingAgent {
     if (interactive && workLinks) {
       settings = withWorkLinks(settings != null ? settings : new JsonObject());
     }
+    if (agentConfigDir != null) {
+      // The agent's own layer goes into the same --settings: the CLI keeps only the last of several
+      // (verified against 2.1.283), so a second flag would silently drop the hooks. Both keys are
+      // honoured from flag settings, and enabledPlugins there outranks the shared user settings —
+      // which is why every plugin the shared file enables and the agent's does not is rendered
+      // false rather than left out (see AgentPluginService#launchEnabledPlugins).
+      settings = settings != null ? settings : new JsonObject();
+      settings.put("autoMemoryDirectory", agentConfigDir.resolve("memory").toString());
+      settings.put("enabledPlugins", agentEnabledPlugins.copy());
+    }
     if (settings != null) {
       command.append(" --settings ").append(shellQuote(settings.encode()));
+    }
+    if (agentConfigDir != null) {
+      // The checkout carries .claude-plugin/plugin.json, so it loads as a plugin and its skills/ are
+      // this session's skills.
+      command.append(" --plugin-dir ").append(shellQuote(agentConfigDir.toString()));
     }
     if (skipPermissions) {
       command.append(" --dangerously-skip-permissions");
     }
+  }
+
+  /**
+   * The system-prompt sentence telling a session with an agent config dir where the skills it writes
+   * for later agents go — the checkout's {@code skills/}, which a person reviews before it is shared.
+   */
+  static String skillsSentence(Path agentConfigDir) {
+    return "Skills you write for every later agent go in "
+        + agentConfigDir.resolve("skills")
+        + "/<name>/SKILL.md; they are reviewed before they are shared.";
   }
 
   /**
