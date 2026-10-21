@@ -40,7 +40,7 @@ import java.util.Optional;
  * the phases apart once the entity has moved on.
  *
  * <p>The project desk, which runs for no entity, is named {@link #FRONT_DESK_NAME} rather than by
- * its internal surface key; every other entity-less session keeps the {@code qits <surface>
+ * its internal surface key, and the delivery desk beside it {@link #DELIVERY_DESK_NAME}; every other entity-less session keeps the {@code qits <surface>
  * <branch>} shape, because an ad-hoc workspace or an editor has nothing better to be called.
  *
  * <p><b>The name is typed, not only passed.</b> A live rename of an interactive session is {@code
@@ -133,6 +133,13 @@ public final class AgentRemoteControl {
   public static final String FRONT_DESK_NAME = "\uD83D\uDC1E qits front desk";
 
   /**
+   * The delivery desk's name: {@link AgentSurface#PROJECT_DELIVERY} runs for no entity either, and
+   * sits beside the front desk in the same list, so it gets a name of its own in the same shape — a
+   * truck in the slot the status square takes — rather than {@code qits project.delivery}.
+   */
+  public static final String DELIVERY_DESK_NAME = "\uD83D\uDE9A qits delivery desk";
+
+  /**
    * How many code points of a title a name keeps. Long enough for every title a person writes as a
    * title; short enough that a pasted paragraph does not become a session name. A cut title ends in
    * {@code …}, which counts towards the limit.
@@ -156,8 +163,8 @@ public final class AgentRemoteControl {
    *       {@code 🟦 qits-555}.
    * </ul>
    *
-   * <p>Without an entity, {@link AgentSurface#PROJECT_WORK} is {@link #FRONT_DESK_NAME}, and every
-   * other surface keeps the old shape: {@code qits} leads because that list is not this platform's
+   * <p>Without an entity, {@link AgentSurface#PROJECT_WORK} is {@link #FRONT_DESK_NAME}, {@link
+   * AgentSurface#PROJECT_DELIVERY} is {@link #DELIVERY_DESK_NAME}, and every other surface keeps the old shape: {@code qits} leads because that list is not this platform's
    * — it holds whatever else the operator's account is running — and the surface key and the branch
    * are the two facts that tell one platform session from another; a container that does not know
    * its branch is named by its surface alone. A blocked flag still puts {@link #BLOCKED_MARKER} in
@@ -208,6 +215,9 @@ public final class AgentRemoteControl {
   private static String entityLessName(String surfaceKey, String branch) {
     if (AgentSurface.PROJECT_WORK.key().equals(surfaceKey)) {
       return FRONT_DESK_NAME;
+    }
+    if (AgentSurface.PROJECT_DELIVERY.key().equals(surfaceKey)) {
+      return DELIVERY_DESK_NAME;
     }
     String key = surfaceKey == null || surfaceKey.isBlank() ? "session" : surfaceKey;
     return branch == null || branch.isBlank() ? "qits " + key : "qits " + key + " " + branch;

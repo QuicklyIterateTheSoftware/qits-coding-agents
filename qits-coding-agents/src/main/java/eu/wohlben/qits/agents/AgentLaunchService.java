@@ -533,14 +533,23 @@ public final class AgentLaunchService {
 
     PinnedSession pinned = pinSession(request.resumeSessionId(), request.fork(), type);
     Rendered rendered =
-        renderedChat(request.scope(), surface, pinned, type, request.agentConfigDir());
+        renderedChat(
+            request.scope(),
+            surface,
+            pinned,
+            type,
+            request.agentConfigDir(),
+            request.environment());
     LaunchSpec spec = rendered.spec();
     // Claude drives chat over stream-json; Kimi has no stdin chat, so its chat rides an in-JVM ACP
     // client with the scoped MCP servers carried on session/new.
     ChatProtocolFactory protocolFactory =
         type == AgentType.KIMI
             ? process ->
-                new AcpChatProtocol(process, buildAcpSessionConfig(request.scope(), surface, pinned))
+                new AcpChatProtocol(
+                    process,
+                    buildAcpSessionConfig(
+                        request.scope(), surface, pinned, false, request.environment()))
             : claudeChatProtocol(pinned, surface, configurationFor(surface));
 
     Command command =
@@ -664,7 +673,8 @@ public final class AgentLaunchService {
             turns.isEmpty() ? null : turns.get(0),
             pinned,
             type,
-            request.agentConfigDir());
+            request.agentConfigDir(),
+            request.environment());
     LaunchSpec spec = rendered.spec();
     // Renameable when it asked for a bridge under a name: Claude with the knob on. Entered before
     // the spawn so an early hook has somewhere to land, and so a setEntity racing the spawn queues
@@ -1033,7 +1043,19 @@ public final class AgentLaunchService {
       PinnedSession pinned,
       AgentType agentType,
       Path agentConfigDir) {
-    return render(scope, surface, pinned, agentType, false, false, null, agentConfigDir);
+    return renderedChat(scope, surface, pinned, agentType, agentConfigDir, Map.of());
+  }
+
+  /** {@link #renderedChat} with this launch's environment overlay — see {@link #overlaid}. */
+  Rendered renderedChat(
+      AgentMcpScope scope,
+      AgentSurface surface,
+      PinnedSession pinned,
+      AgentType agentType,
+      Path agentConfigDir,
+      Map<String, String> environment) {
+    return render(
+        scope, surface, pinned, agentType, false, false, null, agentConfigDir, environment);
   }
 
   /**
@@ -1115,9 +1137,23 @@ public final class AgentLaunchService {
    */
   AcpSessionConfig buildAcpSessionConfig(
       AgentMcpScope scope, AgentSurface surface, PinnedSession pinned, boolean readOnly) {
+    return buildAcpSessionConfig(scope, surface, pinned, readOnly, Map.of());
+  }
+
+  /**
+   * {@link #buildAcpSessionConfig} with this launch's environment overlay, whose {@code QITS_TOKEN}
+   * becomes the platform servers' bearer — see {@link #withLaunchBearer}.
+   */
+  AcpSessionConfig buildAcpSessionConfig(
+      AgentMcpScope scope,
+      AgentSurface surface,
+      PinnedSession pinned,
+      boolean readOnly,
+      Map<String, String> environment) {
     AgentSurfaceConfiguration configuration = configurationFor(surface);
     List<AcpSessionConfig.AcpMcpServer> servers = new ArrayList<>();
-    List<ScopedMcp> attached = attachedServers(scope, configuration, readOnly).servers();
+    List<ScopedMcp> attached =
+        attachedServers(scope, configuration, readOnly, environment).servers();
     for (ScopedMcp server : attached) {
       // The central qits server only with fixed headers (qits-625): Kimi has no headers helper, so
       // without a header the server would only ever answer 401 — a dead tool, not a missing one.
@@ -1179,7 +1215,7 @@ public final class AgentLaunchService {
       PinnedSession pinned,
       AgentType agentType,
       Path agentConfigDir) {
-    return render(scope, surface, pinned, agentType, false, true, null, agentConfigDir);
+    return render(scope, surface, pinned, agentType, false, true, null, agentConfigDir, Map.of());
   }
 
   /**
@@ -1214,7 +1250,29 @@ public final class AgentLaunchService {
       PinnedSession pinned,
       AgentType agentType,
       Path agentConfigDir) {
-    return render(scope, surface, pinned, agentType, true, false, initialContext, agentConfigDir);
+    return renderedInteractive(
+        scope, surface, initialContext, pinned, agentType, agentConfigDir, Map.of());
+  }
+
+  /** {@link #renderedInteractive} with this launch's environment overlay — see {@link #overlaid}. */
+  Rendered renderedInteractive(
+      AgentMcpScope scope,
+      AgentSurface surface,
+      String initialContext,
+      PinnedSession pinned,
+      AgentType agentType,
+      Path agentConfigDir,
+      Map<String, String> environment) {
+    return render(
+        scope,
+        surface,
+        pinned,
+        agentType,
+        true,
+        false,
+        initialContext,
+        agentConfigDir,
+        environment);
   }
 
   /**
@@ -1226,6 +1284,10 @@ public final class AgentLaunchService {
    * <p>{@code unattended} is the autonomous run's fence: nobody watches a composed run's first turn
    * under skip-permissions, so every server url is read-only marked. The fence is the union of the
    * run's shape and the configuration's own {@code readOnly} flag. See {@link #markReadOnly}.
+   *
+   * <p>{@code environment} is the request's overlay: laid over the rendered process environment
+   * last ({@link #overlaid}), and its {@code QITS_TOKEN}, when there is one, is the bearer on every
+   * platform server ({@link #withLaunchBearer}).
    */
   private Rendered render(
       AgentMcpScope scope,
@@ -1235,10 +1297,11 @@ public final class AgentLaunchService {
       boolean interactive,
       boolean unattended,
       String initialContext,
-      Path agentConfigDir) {
+      Path agentConfigDir,
+      Map<String, String> environment) {
     AgentSurfaceConfiguration configuration = configurationFor(surface);
     CodingAgent agent = CodingAgentFactory.ofType(agentType);
-    Attached resolved = attachedServers(scope, configuration, unattended);
+    Attached resolved = attachedServers(scope, configuration, unattended, environment);
     List<ScopedMcp> attached = resolved.servers();
     for (ScopedMcp server : attached) {
       // Two rules for the central `qits` platform server (qits-630, owner-decided), Claude only —
@@ -1289,7 +1352,7 @@ public final class AgentLaunchService {
     }
     CodingAgent rendered =
         configured(agent, agentType, pinned, configuration, interactive, agentConfigDir);
-    LaunchSpec spec = interactive ? rendered.start() : rendered.chat();
+    LaunchSpec spec = overlaid(interactive ? rendered.start() : rendered.chat(), environment);
     return new Rendered(
         spec,
         launchRecord(configuration, agentType, rendered, resolved, interactive),
@@ -1493,6 +1556,27 @@ public final class AgentLaunchService {
    * {@link #markReadOnly}.
    */
   private Attached attachedServers(
+      AgentMcpScope scope,
+      AgentSurfaceConfiguration configuration,
+      boolean unattended,
+      Map<String, String> environment) {
+    // The launch's bearer, when its overlay carries one, on every platform server it attaches —
+    // and only on those: the catalog's external servers are resolved apart and never see it.
+    Attached attached = attachedServers(scope, configuration, unattended);
+    Optional<String> token = launchToken(environment);
+    if (token.isEmpty()) {
+      return attached;
+    }
+    return new Attached(
+        attached.servers().stream().map(server -> withLaunchBearer(server, token.get())).toList(),
+        attached.notes());
+  }
+
+  /**
+   * The platform servers as the host and the configuration resolve them, before a launch's own
+   * {@code QITS_TOKEN} replaces their bearer.
+   */
+  private Attached attachedServers(
       AgentMcpScope scope, AgentSurfaceConfiguration configuration, boolean unattended) {
     if (!configuration.attachesConfiguredServers()) {
       List<ScopedMcp> hosted = mcpServers.serversFor(scope);
@@ -1596,6 +1680,68 @@ public final class AgentLaunchService {
       }
     }
     return external;
+  }
+
+  /** The overlay variable whose value becomes this launch's platform bearer. */
+  static final String QITS_TOKEN = "QITS_TOKEN";
+
+  /** The overlay's non-blank {@code QITS_TOKEN}, or empty when the launch carries none. */
+  private static Optional<String> launchToken(Map<String, String> environment) {
+    String token = environment == null ? null : environment.get(QITS_TOKEN);
+    return token == null || token.isBlank() ? Optional.empty() : Optional.of(token.trim());
+  }
+
+  /**
+   * The same platform server with {@code Authorization: Bearer <token>} in place of the host's
+   * {@link AgentMcpServers#platformHeaders()} {@code Authorization}, for this launch only. A launch
+   * whose overlay hands the process its own {@code QITS_TOKEN} acts as that token's principal in its
+   * shell; its tools must act as the same one, not as the host. Any other host header is kept.
+   * Applied to platform servers only — the catalog's external servers are never handed a platform
+   * credential.
+   */
+  private static ScopedMcp withLaunchBearer(ScopedMcp server, String token) {
+    Map<String, String> headers = new HashMap<>();
+    server.headers().forEach(
+        (name, value) -> {
+          if (!"Authorization".equalsIgnoreCase(name)) {
+            headers.put(name, value);
+          }
+        });
+    headers.put("Authorization", "Bearer " + token);
+    return new ScopedMcp(server.key(), server.url(), server.allowedTools(), headers);
+  }
+
+  /**
+   * Lays the request's environment overlay over a rendered launch — last, so after {@link
+   * #withAgentHome} and after anything the harness set itself, and a value in the overlay wins.
+   *
+   * <p>A key mapped to an empty string removes that variable from the child: it is dropped from the
+   * overlay the process is spawned with, and the script opens with an {@code unset} of it, because
+   * the spawned shell inherits the daemon's own environment and a variable the daemon has would
+   * otherwise come through regardless. The names are shell identifiers, which {@link
+   * AgentLaunchRequest} enforces. No overlay returns {@code spec} as it was.
+   */
+  static LaunchSpec overlaid(LaunchSpec spec, Map<String, String> environment) {
+    if (environment == null || environment.isEmpty()) {
+      return spec;
+    }
+    Map<String, String> env = new HashMap<>(spec.environment());
+    List<String> removed = new ArrayList<>();
+    environment.forEach(
+        (name, value) -> {
+          if (value.isEmpty()) {
+            env.remove(name);
+            removed.add(name);
+          } else {
+            env.put(name, value);
+          }
+        });
+    if (removed.isEmpty()) {
+      return new LaunchSpec(spec.script(), spec.interactive(), env);
+    }
+    removed.sort(null);
+    return new LaunchSpec(
+        "unset " + String.join(" ", removed) + "; " + spec.script(), spec.interactive(), env);
   }
 
   /**

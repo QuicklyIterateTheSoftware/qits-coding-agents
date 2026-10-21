@@ -26,9 +26,9 @@ import java.util.Optional;
  *   <li>the <b>system prompt</b> is the one thing the library genuinely ships: {@link
  *       AgentLaunchService#COMPOSED_RUN_PROMPT} for the two composed runs ({@link
  *       AgentSurface#EPIC_AUTONOMOUS} and {@link AgentSurface#TICKET_DISPATCH}), and nothing for the
- *       other five. {@link AgentLaunchService#TICKETS_DESK_PROMPT} shipped this way for {@code
+ *       other six. {@link AgentLaunchService#TICKETS_DESK_PROMPT} shipped this way for {@code
  *       project.tickets} before that key retired (qits-404); {@link AgentSurface#PROJECT_WORK}, the
- *       surface that replaced it, ships an empty prompt like the other five and this task left that
+ *       surface that replaced it, ships an empty prompt like the other six and this task left that
  *       as is. It was a text block in a {@code switch} arm a release ago and it still is; the
  *       document makes it editable, it does not make it move.
  * </ul>
@@ -100,7 +100,7 @@ public final class AgentSurfaceConfigurations {
   }
 
   /**
-   * The system-prompt appendix a surface ships with. Two surfaces have one and the other five steer
+   * The system-prompt appendix a surface ships with. Two surfaces have one and the other six steer
    * with nothing: the <b>two composed runs</b> carry {@link AgentLaunchService#COMPOSED_RUN_PROMPT},
    * which tells an unattended main loop to orchestrate and delegate rather than type the code itself
    * — the one instruction nobody is present to give them mid-run. {@code project.tickets} used to be

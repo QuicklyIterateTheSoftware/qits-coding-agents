@@ -2,6 +2,8 @@ package eu.wohlben.qits.agents;
 
 import eu.wohlben.qits.commands.InvalidCommandRequestException;
 import java.nio.file.Path;
+import java.util.Map;
+import java.util.regex.Pattern;
 
 /**
  * One agent launch as the caller asks for it.
@@ -29,6 +31,13 @@ import java.nio.file.Path;
  *     that makes the directory a plugin — or null for none, which renders exactly what a launch
  *     rendered before the field existed. Claude only: Kimi ignores it. Set by the host, never read
  *     off a request body: it is a path on the container's filesystem.
+ * @param environment variables this one launch overlays on the agent's process environment, after
+ *     everything the library sets itself — a value here wins, and a key mapped to an empty string
+ *     removes that variable from the child. A non-blank {@code QITS_TOKEN} also becomes the bearer
+ *     on every platform MCP server of this launch, in place of the host's {@link
+ *     AgentMcpServers#platformHeaders()}, so the session's tools act with the same credential as its
+ *     shell. Null is no overlay, which renders exactly what a launch rendered before the field
+ *     existed. Set by the host, never read off a request body: it can carry a credential.
  */
 public record AgentLaunchRequest(
     AgentMcpScope scope,
@@ -39,7 +48,46 @@ public record AgentLaunchRequest(
     boolean fork,
     boolean deliverTaskPrompt,
     AgentType agentType,
-    Path agentConfigDir) {
+    Path agentConfigDir,
+    Map<String, String> environment) {
+
+  /** What a variable name in {@link #environment} must look like: a POSIX shell identifier. */
+  private static final Pattern VARIABLE_NAME = Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
+
+  public AgentLaunchRequest {
+    environment = environment == null ? Map.of() : Map.copyOf(environment);
+    for (String name : environment.keySet()) {
+      // A removal is rendered as a shell `unset`, so a name that is not an identifier is refused
+      // rather than interpolated.
+      if (!VARIABLE_NAME.matcher(name).matches()) {
+        throw new InvalidCommandRequestException("Invalid environment variable name: " + name);
+      }
+    }
+  }
+
+  /** A launch without an environment overlay — the shape every caller had before it existed. */
+  public AgentLaunchRequest(
+      AgentMcpScope scope,
+      AgentSurface surface,
+      AgentLaunchMode mode,
+      String initialContext,
+      String resumeSessionId,
+      boolean fork,
+      boolean deliverTaskPrompt,
+      AgentType agentType,
+      Path agentConfigDir) {
+    this(
+        scope,
+        surface,
+        mode,
+        initialContext,
+        resumeSessionId,
+        fork,
+        deliverTaskPrompt,
+        agentType,
+        agentConfigDir,
+        Map.of());
+  }
 
   /** A launch without an agent config dir — the shape every caller had before it existed. */
   public AgentLaunchRequest(
@@ -60,7 +108,8 @@ public record AgentLaunchRequest(
         fork,
         deliverTaskPrompt,
         agentType,
-        null);
+        null,
+        Map.of());
   }
 
   /** This request with {@code dir} as the agent's own config checkout. */
@@ -74,7 +123,23 @@ public record AgentLaunchRequest(
         fork,
         deliverTaskPrompt,
         agentType,
-        dir);
+        dir,
+        environment);
+  }
+
+  /** This request with {@code overlay} as its environment overlay; null is none. */
+  public AgentLaunchRequest withEnvironment(Map<String, String> overlay) {
+    return new AgentLaunchRequest(
+        scope,
+        surface,
+        mode,
+        initialContext,
+        resumeSessionId,
+        fork,
+        deliverTaskPrompt,
+        agentType,
+        agentConfigDir,
+        overlay);
   }
 
   public AgentLaunchMode modeOrDefault() {

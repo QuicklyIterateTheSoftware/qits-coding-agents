@@ -729,7 +729,44 @@ class AgentLaunchServiceProjectHostTest {
       assertThrows(InvalidCommandRequestException.class, () -> AgentSurface.of("project.epic"));
       assertThrows(InvalidCommandRequestException.class, () -> AgentSurface.of(""));
       assertEquals(Optional.empty(), AgentSurface.parse(null));
-      assertEquals(7, AgentSurface.KNOWN.size());
+      assertEquals(8, AgentSurface.KNOWN.size());
+    }
+
+    @Test
+    void theDeliveryDeskResolvesAndShipsWhatTheFrontDeskShips() {
+      // Its own surface, because the projects daemon tells its live sessions apart by surface; its
+      // shipped defaults are project.work's — no prompts, remote control on — under its own key.
+      assertEquals(AgentSurface.PROJECT_DELIVERY, AgentSurface.of("project.delivery"));
+      assertTrue(AgentSurface.KNOWN.contains(AgentSurface.PROJECT_DELIVERY));
+
+      AgentSurfaceConfiguration delivery =
+          AgentSurfaceConfigurations.shippedFor(AgentSurface.PROJECT_DELIVERY, null, true);
+      AgentSurfaceConfiguration work =
+          AgentSurfaceConfigurations.shippedFor(AgentSurface.PROJECT_WORK, null, true);
+      assertEquals("project.delivery", delivery.surface());
+      assertEquals("", delivery.systemPrompt());
+      assertEquals("", delivery.initialPrompt());
+      assertTrue(delivery.remoteControl());
+      assertEquals(work.harness(), delivery.harness());
+      assertEquals(work.model(), delivery.model());
+      assertEquals(work.permissionMode(), delivery.permissionMode());
+    }
+
+    @Test
+    void theDeliveryDeskIsNamedAsADeskNotByItsKey() {
+      AgentLaunchService service = service();
+      AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
+
+      assertTrue(
+          service
+              .renderInteractive(
+                  AgentMcpScope.REPOSITORY,
+                  AgentSurface.PROJECT_DELIVERY,
+                  null,
+                  pinned,
+                  AgentType.CLAUDE)
+              .script()
+              .contains("--remote-control '" + AgentRemoteControl.DELIVERY_DESK_NAME + "'"));
     }
 
     @Test
@@ -1674,6 +1711,197 @@ class AgentLaunchServiceProjectHostTest {
               .script();
 
       assertFalse(script.contains("--allowedTools"), script);
+    }
+  }
+
+  // --- the request's environment overlay (qits-1488) --------------------------------------------
+
+  /**
+   * A host can hand one launch an environment of its own — the delivery desk runs under its own
+   * token rather than the daemon's. The overlay wins over everything the library sets, an empty
+   * value removes a variable, and its {@code QITS_TOKEN} is the bearer on the platform servers of
+   * that launch and of no other.
+   */
+  @Nested
+  class EnvironmentOverlay {
+
+    private static final String QITS_URL = "http://dev-qits-platform-access-mcp-service:8080/mcp";
+
+    /** A host that puts its own bearer on the {@code qits} server, as a RUNNER host does. */
+    private AgentMcpServers hostWithABearer() {
+      return scope ->
+          List.of(
+              new ScopedMcp(
+                  "qits", QITS_URL, List.of(), Map.of("Authorization", "Bearer host")));
+    }
+
+    /** A host with the {@code qits} server and no headers: Claude renders the headers helper. */
+    private AgentMcpServers hostWithoutHeaders() {
+      return scope -> List.of(new ScopedMcp("qits", QITS_URL, List.of()));
+    }
+
+    private AgentLaunchRequest delivery(Map<String, String> environment) {
+      return new AgentLaunchRequest(
+              AgentMcpScope.REPOSITORY,
+              AgentSurface.PROJECT_DELIVERY,
+              AgentLaunchMode.INTERACTIVE,
+              null,
+              null,
+              false,
+              false,
+              null)
+          .withEnvironment(environment);
+    }
+
+    @Test
+    void theOverlaysTokenReachesTheProcessAndBecomesTheQitsBearer() {
+      serviceWith(hostWithoutHeaders()).launch(delivery(Map.of("QITS_TOKEN", "t2")));
+
+      Commands.Launch launch = commands.last();
+      assertEquals("t2", launch.environment().get("QITS_TOKEN"));
+      assertEquals(CLAUDE_MOUNT, launch.environment().get("HOME"), "the library's own still apply");
+      assertTrue(
+          launch
+              .script()
+              .contains(
+                  "\"qits\":{\"type\":\"http\",\"url\":\""
+                      + QITS_URL
+                      + "\",\"headers\":{\"Authorization\":\"Bearer t2\"}}"),
+          launch.script());
+      assertFalse(launch.script().contains("headersHelper"), launch.script());
+      assertEquals(
+          List.of("Bearer t2"),
+          launch.agent().redactions(),
+          "the launch's bearer is redacted from the stored script like the host's");
+    }
+
+    @Test
+    void theOverlaysTokenReplacesTheHostsBearerForThisLaunchOnly() {
+      AgentLaunchService service = serviceWith(hostWithABearer());
+
+      service.launch(delivery(Map.of("QITS_TOKEN", "t2")));
+      String overlaid = commands.last().script();
+      service.launch(delivery(null));
+      String plain = commands.last().script();
+
+      assertTrue(overlaid.contains("\"Authorization\":\"Bearer t2\""), overlaid);
+      assertFalse(overlaid.contains("Bearer host"), overlaid);
+      assertTrue(plain.contains("\"Authorization\":\"Bearer host\""), plain);
+      assertFalse(plain.contains("Bearer t2"), plain);
+    }
+
+    @Test
+    void aLaunchWithoutAnOverlayIsUnchanged() {
+      AgentLaunchService service = serviceWith(hostWithABearer());
+      AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
+      LaunchSpec rendered =
+          service.renderInteractive(
+              AgentMcpScope.REPOSITORY,
+              AgentSurface.PROJECT_DELIVERY,
+              null,
+              pinned,
+              AgentType.CLAUDE);
+
+      service.launch(delivery(null));
+      Commands.Launch none = commands.last();
+      service.launch(delivery(Map.of()));
+      Commands.Launch empty = commands.last();
+
+      assertEquals(rendered.environment(), none.environment(), "same env");
+      assertEquals(none.environment(), empty.environment());
+      assertFalse(none.environment().containsKey("QITS_TOKEN"));
+      assertEquals(
+          rendered.script().replaceAll("[0-9a-f-]{36}", "<id>"),
+          none.script().replaceAll("[0-9a-f-]{36}", "<id>"),
+          "same script, same headers");
+      assertEquals(
+          none.script().replaceAll("[0-9a-f-]{36}", "<id>"),
+          empty.script().replaceAll("[0-9a-f-]{36}", "<id>"));
+      assertTrue(none.script().contains("\"Authorization\":\"Bearer host\""), none.script());
+    }
+
+    @Test
+    void anEmptyValueRemovesTheVariable() {
+      service().launch(delivery(Map.of("X", "", "HOME", "")));
+
+      Commands.Launch launch = commands.last();
+      assertFalse(launch.environment().containsKey("X"));
+      assertFalse(
+          launch.environment().containsKey("HOME"),
+          "the overlay is applied after the library's own HOME, so it can remove that too");
+      assertTrue(
+          launch.script().startsWith("unset HOME X; "),
+          "the daemon's own environment is inherited, so the shell unsets it: " + launch.script());
+    }
+
+    @Test
+    void anOverlayValueWinsOverWhatTheLibrarySets() {
+      service().launch(delivery(Map.of("HOME", "/elsewhere", "CLAUDE_CODE_SANDBOXED", "0")));
+
+      assertEquals("/elsewhere", commands.last().environment().get("HOME"));
+      assertEquals("0", commands.last().environment().get("CLAUDE_CODE_SANDBOXED"));
+    }
+
+    @Test
+    void aChatLaunchAppliesItTooAndKimisSessionCarriesTheBearer() {
+      serviceWith(hostWithoutHeaders())
+          .launch(
+              new AgentLaunchRequest(
+                  AgentMcpScope.REPOSITORY,
+                  AgentSurface.PROJECT_DELIVERY,
+                  AgentLaunchMode.CHAT,
+                  null,
+                  null,
+                  false,
+                  false,
+                  null,
+                  null,
+                  Map.of("QITS_TOKEN", "t2")));
+      assertEquals("t2", commands.last().environment().get("QITS_TOKEN"));
+      assertTrue(commands.last().script().contains("Bearer t2"), commands.last().script());
+
+      AgentLaunchService service = serviceWith(hostWithoutHeaders());
+      AcpSessionConfig config =
+          service.buildAcpSessionConfig(
+              AgentMcpScope.REPOSITORY,
+              AgentSurface.PROJECT_DELIVERY,
+              service.pinSession(null, false, AgentType.KIMI),
+              false,
+              Map.of("QITS_TOKEN", "t2"));
+      assertEquals(
+          List.of("qits={Authorization=Bearer t2}"),
+          config.mcpServers().stream().map(s -> s.name() + "=" + s.headers()).toList(),
+          "Kimi gets the qits server once it has a header to carry");
+    }
+
+    @Test
+    void anExternalCatalogServerNeverGetsTheToken() {
+      configurations =
+          new SeededConfigurationDocument()
+              .surface(
+                  AgentSurface.PROJECT_DELIVERY,
+                  true,
+                  "",
+                  SeededConfigurationDocument.server("qits", false, false, false, false, List.of()))
+              .attaching(
+                  SeededConfigurationDocument.external(
+                      "docs", "https://docs.example/mcp", "", "", List.of()))
+              .configurations();
+
+      serviceWith(hostWithABearer()).launch(delivery(Map.of("QITS_TOKEN", "t2")));
+
+      String script = commands.last().script();
+      assertTrue(script.contains("\"qits\":{\"type\":\"http\",\"url\":\"" + QITS_URL
+          + "\",\"headers\":{\"Authorization\":\"Bearer t2\"}}"), script);
+      assertTrue(
+          script.contains("\"docs\":{\"type\":\"http\",\"url\":\"https://docs.example/mcp\"}"),
+          script);
+    }
+
+    @Test
+    void aVariableNameThatIsNotAnIdentifierIsRefused() {
+      assertThrows(
+          InvalidCommandRequestException.class, () -> delivery(Map.of("X; rm -rf /", "")));
     }
   }
 

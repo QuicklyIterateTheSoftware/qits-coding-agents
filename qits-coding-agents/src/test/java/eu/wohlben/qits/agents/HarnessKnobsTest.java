@@ -195,6 +195,17 @@ class HarnessKnobsTest {
     }
 
     @Test
+    void theDeliveryDeskIsTheDeliveryDeskNotItsSurfaceKey() {
+      assertEquals(
+          "\uD83D\uDE9A qits delivery desk",
+          AgentRemoteControl.sessionName(
+              null, EntityFacts.NONE, AgentSurface.PROJECT_DELIVERY, "main"));
+      assertEquals(
+          AgentRemoteControl.DELIVERY_DESK_NAME,
+          AgentRemoteControl.sessionName(null, null, "project.delivery", null));
+    }
+
+    @Test
     void aKnownEntityReadsSquareIdAndTitle() {
       assertEquals(
           "\uD83D\uDFE6 qits-555 Comments on every work entity",

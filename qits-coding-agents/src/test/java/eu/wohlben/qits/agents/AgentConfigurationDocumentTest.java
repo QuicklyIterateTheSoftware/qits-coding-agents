@@ -274,6 +274,23 @@ class AgentConfigurationDocumentTest {
   class Reading {
 
     @Test
+    void aDocumentWithTheDeliveryDeskReadsIt() throws IOException {
+      String delivery =
+          SEEDED_EPIC_CHAT
+              .replace("\"epic.chat\"", "\"project.delivery\"")
+              .replace("\"model\": \"\"", "\"model\": \"opus\"");
+      AgentSurfaceConfigurations read =
+          AgentSurfaceConfigurations.readFrom(write(document(SEEDED_EPIC_CHAT, delivery)).toString());
+
+      AgentSurfaceConfiguration resolved =
+          read.resolve(AgentSurface.PROJECT_DELIVERY, AgentType.CLAUDE, true);
+      assertEquals("project.delivery", resolved.surface());
+      assertEquals("opus", resolved.model(), "the document's row, not the shipped constants");
+      assertFalse(resolved.shipped());
+      assertTrue(read.document().orElseThrow().surfaces().containsKey("epic.chat"));
+    }
+
+    @Test
     void aSeededSurfaceReadsBackFieldForField() throws IOException {
       AgentConfigurationDocument read =
           AgentConfigurationDocument.readFrom(write(document(SEEDED_EPIC_CHAT)).toString())

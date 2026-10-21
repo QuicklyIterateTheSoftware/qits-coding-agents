@@ -12,12 +12,14 @@ import java.util.Optional;
  * there was nowhere to put a prompt. {@link #PROJECT_WORK} is what both of the enum's values folded
  * into once the estate turned over onto the one merged front desk.
  *
- * <p>The seven the platform has today:
+ * <p>The eight the platform has today:
  *
  * <ul>
  *   <li>{@link #PROJECT_WORK} — the one project desk's surface, at {@code :project/work}: the merged
  *       epics+tickets front desk. It replaced {@code project.epics} and {@code project.tickets},
  *       which retired once the estate turned over onto it.
+ *   <li>{@link #PROJECT_DELIVERY} — the delivery desk, the session that runs the project's delivery
+ *       loop beside the front desk.
  *   <li>{@link #EPIC_CHAT} / {@link #EPIC_AGENT} — the refining route's chat and agent tabs.
  *   <li>{@link #WORKSPACE_CHAT} / {@link #WORKSPACE_AGENT} — the workspace detail route's chat and
  *       agents tabs.
@@ -52,6 +54,13 @@ public record AgentSurface(String key) {
    */
   public static final AgentSurface PROJECT_WORK = new AgentSurface("project.work");
 
+  /**
+   * The delivery desk — the session that runs the project's delivery loop (qits-1440). Projects
+   * daemon, {@code REPOSITORY} scope, interactive. A surface of its own rather than a second {@link
+   * #PROJECT_WORK} session, because the daemon tells its live sessions apart by surface.
+   */
+  public static final AgentSurface PROJECT_DELIVERY = new AgentSurface("project.delivery");
+
   /** The refining route's chat tab. Workspace daemon, {@code REPOSITORY} scope. */
   public static final AgentSurface EPIC_CHAT = new AgentSurface("epic.chat");
 
@@ -72,7 +81,7 @@ public record AgentSurface(String key) {
 
   /**
    * The vocabulary, in the order the editor lists it: the one project desk, the four a human opens
-   * in a workspace container, then the two composed runs.
+   * in a workspace container, the two composed runs, then the delivery desk.
    *
    * <p>The same order and the same keys as {@code AgentSurfaceDefaults.SURFACES} in
    * qits-projects-service. The two lists are copies rather than a shared type — that service depends
@@ -88,7 +97,8 @@ public record AgentSurface(String key) {
           WORKSPACE_CHAT,
           WORKSPACE_AGENT,
           EPIC_AUTONOMOUS,
-          TICKET_DISPATCH);
+          TICKET_DISPATCH,
+          PROJECT_DELIVERY);
 
   public AgentSurface {
     key = key == null ? null : key.trim().toLowerCase(Locale.ROOT);
