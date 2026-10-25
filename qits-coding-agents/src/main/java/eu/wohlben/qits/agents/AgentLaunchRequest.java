@@ -38,6 +38,18 @@ import java.util.regex.Pattern;
  *     AgentMcpServers#platformHeaders()}, so the session's tools act with the same credential as its
  *     shell. Null is no overlay, which renders exactly what a launch rendered before the field
  *     existed. Set by the host, never read off a request body: it can carry a credential.
+ * @param sessionKey which of the container's entities this session is about, or null for the
+ *     container's own one (seeded from {@link AgentDefaults}) — the shape every caller had before
+ *     it existed. A host that runs several sessions in one container keys each by what it is about
+ *     (the project daemon: {@code front-desk} for its desk, an entity's UUID for a refinement), and
+ *     the session's name is then rendered from that key's entity, renamed by {@link
+ *     AgentLaunchService#setEntity(String, String, EntityFacts)} for that key and by nothing else.
+ *     Set by the host, never read off a request body.
+ * @param entityId the key's entity as its qualified id ({@code qits-1234}) — what {@link
+ *     AgentDefaults#entityId()} is to an unkeyed launch — or null to keep what the service already
+ *     holds for the key. Read only with a {@code sessionKey}.
+ * @param entityFacts the key's entity facts, or null to keep what the service already holds for the
+ *     key. Read only with a {@code sessionKey}.
  */
 public record AgentLaunchRequest(
     AgentMcpScope scope,
@@ -49,7 +61,10 @@ public record AgentLaunchRequest(
     boolean deliverTaskPrompt,
     AgentType agentType,
     Path agentConfigDir,
-    Map<String, String> environment) {
+    Map<String, String> environment,
+    String sessionKey,
+    String entityId,
+    EntityFacts entityFacts) {
 
   /** What a variable name in {@link #environment} must look like: a POSIX shell identifier. */
   private static final Pattern VARIABLE_NAME = Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
@@ -63,6 +78,34 @@ public record AgentLaunchRequest(
         throw new InvalidCommandRequestException("Invalid environment variable name: " + name);
       }
     }
+  }
+
+  /** A launch without a session key — the shape every caller had before it existed. */
+  public AgentLaunchRequest(
+      AgentMcpScope scope,
+      AgentSurface surface,
+      AgentLaunchMode mode,
+      String initialContext,
+      String resumeSessionId,
+      boolean fork,
+      boolean deliverTaskPrompt,
+      AgentType agentType,
+      Path agentConfigDir,
+      Map<String, String> environment) {
+    this(
+        scope,
+        surface,
+        mode,
+        initialContext,
+        resumeSessionId,
+        fork,
+        deliverTaskPrompt,
+        agentType,
+        agentConfigDir,
+        environment,
+        null,
+        null,
+        null);
   }
 
   /** A launch without an environment overlay — the shape every caller had before it existed. */
@@ -124,7 +167,10 @@ public record AgentLaunchRequest(
         deliverTaskPrompt,
         agentType,
         dir,
-        environment);
+        environment,
+        sessionKey,
+        entityId,
+        entityFacts);
   }
 
   /** This request with {@code overlay} as its environment overlay; null is none. */
@@ -139,7 +185,32 @@ public record AgentLaunchRequest(
         deliverTaskPrompt,
         agentType,
         agentConfigDir,
-        overlay);
+        overlay,
+        sessionKey,
+        entityId,
+        entityFacts);
+  }
+
+  /**
+   * This request as a session of {@code key}, whose entity is {@code entityId} with {@code facts} —
+   * either null to keep what the service already holds for the key. A null or blank key is the
+   * container's own entity, and the other two are then ignored.
+   */
+  public AgentLaunchRequest withSessionKey(String key, String entityId, EntityFacts facts) {
+    return new AgentLaunchRequest(
+        scope,
+        surface,
+        mode,
+        initialContext,
+        resumeSessionId,
+        fork,
+        deliverTaskPrompt,
+        agentType,
+        agentConfigDir,
+        environment,
+        key,
+        entityId,
+        facts);
   }
 
   public AgentLaunchMode modeOrDefault() {

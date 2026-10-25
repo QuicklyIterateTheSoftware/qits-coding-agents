@@ -5,11 +5,12 @@ package eu.wohlben.qits.agents;
  * facts a session name is rendered from — see {@link AgentRemoteControl#sessionName(String,
  * EntityFacts, String, String)}.
  *
- * <p>Seeded from {@link AgentDefaults} at boot and moved by {@code AgentLaunchService.setEntity}
- * while the container lives, because all three change under a running session: a title is edited,
- * a status is transitioned, a block is raised and lifted. Held as one value rather than three
- * fields so a change is one volatile write, and a session is never named from a title of one
- * moment and a status of another.
+ * <p>Held per session key: the container's own entity is seeded from {@link AgentDefaults} at boot,
+ * a multiplexing host's per-session entities arrive with their launches, and each is moved by
+ * {@code AgentLaunchService.setEntity} while the container lives, because all three change under a
+ * running session: a title is edited, a status is transitioned, a block is raised and lifted. Held
+ * as one value rather than three fields so a change is one volatile write, and a session is never
+ * named from a title of one moment and a status of another.
  *
  * @param title the entity's title as the host stores it, or null/blank when unknown. Raw: the name
  *     sanitises it, so a host passes what it has rather than guessing what a PTY can take

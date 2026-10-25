@@ -2282,6 +2282,133 @@ class AgentLaunchServiceProjectHostTest {
       assertTrue(commands.keystrokesTo.isEmpty());
     }
 
+    // --- per-session-key entities (qits-1309): a multiplexing host's sessions, each its own ---
+
+    private static final EntityFacts REFINING_A =
+        new EntityFacts("Desk refinement", "REPORTED", false);
+
+    private static final EntityFacts REFINING_B = new EntityFacts("Other ticket", "REFINED", false);
+
+    private static String keyedName(String id, EntityFacts facts) {
+      return AgentRemoteControl.sessionName(id, facts, AgentSurface.PROJECT_WORK.key(), null);
+    }
+
+    private Command keyedChat(
+        AgentLaunchService service, String key, String id, EntityFacts facts) {
+      return service.launchChat(
+          chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK).withSessionKey(key, id, facts));
+    }
+
+    @Test
+    void aKeyedLaunchIsNamedFromItsKeysEntityAndNotTheContainers() {
+      forTicket();
+      configurations = remoteControlOn();
+      AgentLaunchService service = service();
+
+      Command command = keyedChat(service, "uuid-a", "qits-1234", REFINING_A);
+
+      String name = new JsonObject(command.agentLaunchRecord()).getString("remoteControlName");
+      assertEquals(keyedName("qits-1234", REFINING_A), name);
+      assertTrue(name.contains("qits-1234 Desk refinement"), name);
+      assertFalse(name.contains("qits-614"), name);
+      assertEquals(REFINING_A, service.entity("uuid-a"));
+      assertEquals(
+          new EntityFacts("Session names", "IMPLEMENTED", false),
+          service.entity(),
+          "the container's own entity is untouched");
+    }
+
+    @Test
+    void aKeyWithoutAnEntityIsNamedWithoutOne() {
+      // The front desk's own session: a key, and nothing to name it after.
+      forTicket();
+      configurations = remoteControlOn();
+
+      Command command = keyedChat(service(), "front-desk", null, null);
+
+      String name = new JsonObject(command.agentLaunchRecord()).getString("remoteControlName");
+      assertEquals(keyedName(null, EntityFacts.NONE), name);
+      assertFalse(name.contains("qits-614"), name);
+    }
+
+    @Test
+    void setEntityForAKeyRenamesOnlyThatKeysSessions() {
+      forTicket();
+      configurations = remoteControlOn();
+      commands.spawnTransports = true;
+      AgentLaunchService service = service();
+      Command a = keyedChat(service, "uuid-a", "qits-1234", REFINING_A);
+      Command b = keyedChat(service, "uuid-b", "qits-1235", REFINING_B);
+      Command unkeyed =
+          service.launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK));
+
+      EntityFacts refined = new EntityFacts("Desk refinement", "REFINED", true);
+      assertEquals(1, service.setEntity("uuid-a", "qits-1234", refined));
+      assertEquals(List.of(a.id() + " " + keyedName("qits-1234", refined)), commands.renames);
+      assertEquals(refined, service.entity("uuid-a"));
+      assertEquals(REFINING_B, service.entity("uuid-b"));
+
+      commands.renames.clear();
+      assertEquals(1, service.setEntity("uuid-b", null, EntityFacts.NONE), "null id keeps the id");
+      assertEquals(
+          List.of(b.id() + " " + keyedName("qits-1235", EntityFacts.NONE)), commands.renames);
+
+      commands.renames.clear();
+      assertEquals(1, service.setEntity(VERIFIED), "the single-entity form: the unkeyed chat only");
+      assertEquals(List.of(unkeyed.id() + " " + VERIFIED_NAME), commands.renames);
+      assertEquals(refined, service.entity("uuid-a"), "and no key's entity moved with it");
+    }
+
+    @Test
+    void aKeyedInteractiveSessionIsRetargetedOnlyByItsKey() {
+      forTicket();
+      configurations = remoteControlOn();
+      AgentLaunchService service = service();
+      Command keyed =
+          service.launch(
+              new AgentLaunchRequest(
+                      AgentMcpScope.REPOSITORY,
+                      AgentSurface.PROJECT_WORK,
+                      AgentLaunchMode.INTERACTIVE,
+                      null,
+                      null,
+                      false,
+                      false,
+                      null)
+                  .withSessionKey("uuid-a", "qits-1234", REFINING_A));
+      assertTrue(
+          commands
+              .last()
+              .script()
+              .contains("--remote-control '" + keyedName("qits-1234", REFINING_A)),
+          commands.last().script());
+      service.onActivity(keyed.id(), "IDLE");
+
+      assertEquals(0, service.setEntity(VERIFIED), "the container's entity is not this session's");
+      assertTrue(commands.keystrokesTo.isEmpty());
+
+      EntityFacts refined = new EntityFacts("Desk refinement", "REFINED", false);
+      assertEquals(1, service.setEntity("uuid-a", "qits-1234", refined));
+      assertEquals(
+          List.of(renameOf(keyed, keyedName("qits-1234", refined))), commands.keystrokesTo);
+    }
+
+    @Test
+    void aForgottenKeyIsNeitherKnownNorRenamed() {
+      forTicket();
+      configurations = remoteControlOn();
+      commands.spawnTransports = true;
+      AgentLaunchService service = service();
+      keyedChat(service, "uuid-a", "qits-1234", REFINING_A);
+
+      assertTrue(service.forgetEntity("uuid-a"));
+      assertEquals(EntityFacts.NONE, service.entity("uuid-a"));
+      assertEquals(0, service.setEntity("uuid-a", "qits-1234", VERIFIED));
+      assertTrue(commands.renames.isEmpty());
+      assertFalse(service.forgetEntity(null), "the container's own entity is never forgotten");
+      assertEquals(new EntityFacts("Session names", "IMPLEMENTED", false), service.entity());
+    }
+
     private AgentSurfaceConfigurations remoteControlOn() {
       return AgentSurfaceConfigurations.of(
           AgentConfigurationDocument.parse(

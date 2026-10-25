@@ -204,19 +204,41 @@ public final class AgentLaunchService {
   private final String taskPromptBootstrap;
 
   /**
-   * What this container knows about the entity it works on — title, status, blocked — which every
-   * session name rendered from now on is built from ({@link AgentRemoteControl#sessionName(String,
-   * EntityFacts, String, String)}). Seeded from {@link AgentDefaults} and moved by {@link
-   * #setEntity}; one volatile value, so a name is never rendered from half of an update.
+   * The session key of the container's own entity — the one an unkeyed launch is about, and the one
+   * the single-entity {@link #setEntity(EntityFacts)} moves. A key a host cannot pass: a null or
+   * blank {@link AgentLaunchRequest#sessionKey()} normalises to it.
    */
-  private volatile EntityFacts entity;
+  private static final String CONTAINER_KEY = "";
+
+  /**
+   * One session key's entity: its qualified id (null when it has none, as a project desk's session
+   * does) and its facts. The container key's id is never read from here but from {@link
+   * AgentDefaults#entityId()}, which is what it has always been.
+   */
+  private record SessionEntity(String id, EntityFacts facts) {}
+
+  /**
+   * What this container knows about the entities its sessions work on — title, status, blocked —
+   * by session key, which every session name rendered from now on is built from ({@link
+   * AgentRemoteControl#sessionName(String, EntityFacts, String, String)}). A workspace container
+   * has one, under {@link #CONTAINER_KEY}, seeded from {@link AgentDefaults} and moved by {@link
+   * #setEntity(EntityFacts)}; a host that multiplexes sessions in one container adds a key per
+   * entity, by launch ({@link AgentLaunchRequest#sessionKey()}) or by {@link #setEntity(String,
+   * String, EntityFacts)}. One value per key, replaced whole, so a name is never rendered from half
+   * of an update.
+   */
+  private final ConcurrentMap<String, SessionEntity> entities = new ConcurrentHashMap<>();
+
+  /** What a renameable chat was named for: its session key and its surface. */
+  private record ChatName(String entityKey, String surfaceKey) {}
 
   /**
    * The live Claude stream-json chats this service launched with Remote Control on, by command id,
-   * holding the surface key each was named for — the chats {@link #setEntity} can rename in place.
-   * Pruned lazily: an entry whose rename answers false has ended, and is dropped then.
+   * holding the session key and surface each was named for — the chats {@link #setEntity} can
+   * rename in place, each only by its own key's. Pruned lazily: an entry whose rename answers false
+   * has ended, and is dropped then.
    */
-  private final ConcurrentMap<String, String> renameableChats = new ConcurrentHashMap<>();
+  private final ConcurrentMap<String, ChatName> renameableChats = new ConcurrentHashMap<>();
 
   /**
    * Chats whose named transport has been created but whose launch has not returned yet, by command
@@ -239,17 +261,20 @@ public final class AgentLaunchService {
       new ConcurrentHashMap<>();
 
   /**
-   * One interactive session's naming state, guarded by its own monitor: the surface it was named
-   * for, the name it carries now, the name it should carry once it is safe to type (null when it
-   * already does), and the activity state its hooks last reported (null before the first).
+   * One interactive session's naming state, guarded by its own monitor: the session key and surface
+   * it was named for, the name it carries now, the name it should carry once it is safe to type
+   * (null when it already does), and the activity state its hooks last reported (null before the
+   * first).
    */
   private static final class InteractiveName {
+    private final String entityKey;
     private final String surfaceKey;
     private String carried;
     private String pending;
     private String state;
 
-    private InteractiveName(String surfaceKey, String carried) {
+    private InteractiveName(String entityKey, String surfaceKey, String carried) {
+      this.entityKey = entityKey;
       this.surfaceKey = surfaceKey;
       this.carried = carried;
     }
@@ -315,14 +340,15 @@ public final class AgentLaunchService {
         taskPromptBootstrap == null ? TASK_PROMPT_BOOTSTRAP : taskPromptBootstrap;
     // Null-tolerant like the rest of this constructor: a test that exercises one rendering seam
     // passes no defaults at all, and an absent seed is nothing known.
-    this.entity = EntityFacts.of(defaults);
+    this.entities.put(CONTAINER_KEY, new SessionEntity(null, EntityFacts.of(defaults)));
   }
 
   /**
-   * Records what the entity this container works on is now — title, status, blocked — and renames
-   * the sessions that can be renamed in place to match; answers how many sessions will carry the new
-   * name: the live chats renamed now, plus the live interactive sessions that were renamed now, are
-   * queued to be renamed at their next idle moment, or already carried it.
+   * Records what the container's own entity is now — title, status, blocked — and renames the
+   * unkeyed sessions that can be renamed in place to match (a keyed launch's are renamed by {@link
+   * #setEntity(String, String, EntityFacts)} for its key, never here); answers how many sessions
+   * will carry the new name: the live chats renamed now, plus the live interactive sessions that
+   * were renamed now, are queued to be renamed at their next idle moment, or already carried it.
    *
    * <p>The facts are stored first, so every launch from here on renders the new name whatever happens
    * below. Then every live Claude chat this service started with Remote Control on is renamed over
@@ -365,21 +391,63 @@ public final class AgentLaunchService {
    * where that cannot happen.
    */
   public int setEntity(EntityFacts facts) {
-    this.entity = facts == null ? EntityFacts.NONE : facts;
+    return setEntity(CONTAINER_KEY, null, facts);
+  }
+
+  /**
+   * {@link #setEntity(EntityFacts)} for one session key: records that {@code key}'s entity is now
+   * {@code qualifiedId} with {@code facts}, and renames only the live sessions launched for that
+   * key — the chats at once, the interactive sessions by the same queue — leaving every other key's
+   * sessions, the container's own included, alone. Answers the count {@link
+   * #setEntity(EntityFacts)} answers, for this key's sessions.
+   *
+   * <p>A null {@code qualifiedId} keeps the id already held for the key; null {@code facts} is
+   * nothing known. A null or blank {@code key} is the container's own entity, exactly {@link
+   * #setEntity(EntityFacts)}: its id is {@link AgentDefaults#entityId()}, and {@code qualifiedId}
+   * is ignored. Shares that method's single-consumer assumption.
+   */
+  public int setEntity(String key, String qualifiedId, EntityFacts facts) {
+    String entityKey = keyOf(key);
+    EntityFacts stored = facts == null ? EntityFacts.NONE : facts;
+    entities.compute(
+        entityKey,
+        (k, old) -> new SessionEntity(qualifiedId != null ? qualifiedId : idOf(old), stored));
     int renamed = 0;
-    for (Map.Entry<String, String> chat : renameableChats.entrySet()) {
-      if (commands.chatRename(chat.getKey(), sessionName(chat.getValue()))) {
+    for (Map.Entry<String, ChatName> chat : renameableChats.entrySet()) {
+      ChatName named = chat.getValue();
+      if (!named.entityKey().equals(entityKey)) {
+        continue;
+      }
+      if (commands.chatRename(chat.getKey(), sessionName(entityKey, named.surfaceKey()))) {
         renamed++;
       } else {
-        renameableChats.remove(chat.getKey(), chat.getValue());
+        renameableChats.remove(chat.getKey(), named);
       }
     }
     for (Map.Entry<String, InteractiveName> session : renameableInteractive.entrySet()) {
-      if (retarget(session.getKey(), session.getValue())) {
+      if (session.getValue().entityKey.equals(entityKey)
+          && retarget(session.getKey(), session.getValue())) {
         renamed++;
       }
     }
     return renamed;
+  }
+
+  /**
+   * Forgets a session key: its entity, and the live sessions launched for it, which no {@link
+   * #setEntity} will rename again. For a host whose session for the key has stopped for good; a
+   * later launch for the key starts it afresh. The container's own entity cannot be forgotten — a
+   * null or blank key is a no-op. Answers whether anything was known for the key.
+   */
+  public boolean forgetEntity(String key) {
+    String entityKey = keyOf(key);
+    if (CONTAINER_KEY.equals(entityKey)) {
+      return false;
+    }
+    boolean known = entities.remove(entityKey) != null;
+    known |= renameableChats.values().removeIf(named -> named.entityKey().equals(entityKey));
+    known |= renameableInteractive.values().removeIf(named -> named.entityKey.equals(entityKey));
+    return known;
   }
 
   /**
@@ -389,7 +457,7 @@ public final class AgentLaunchService {
    * facts, so it shares {@link #setEntity}'s single-consumer assumption.
    */
   public int setBlocked(boolean blocked) {
-    return setEntity(entity.withBlocked(blocked));
+    return setEntity(entity().withBlocked(blocked));
   }
 
   /**
@@ -398,17 +466,58 @@ public final class AgentLaunchService {
    * wears (see {@link AgentRemoteControl#AGENT_WAITING_GLYPH}).
    */
   public int setBlocked(boolean blocked, String blockSource) {
-    return setEntity(entity.withBlocked(blocked, blockSource));
+    return setEntity(entity().withBlocked(blocked, blockSource));
   }
 
   /** Whether launches currently render the blocked marker. */
   public boolean blocked() {
-    return entity.blocked();
+    return entity().blocked();
   }
 
-  /** The entity facts launches currently render their names from. */
+  /** The entity facts unkeyed launches currently render their names from. */
   public EntityFacts entity() {
-    return entity;
+    return entity(CONTAINER_KEY);
+  }
+
+  /**
+   * The entity facts {@code key}'s launches currently render their names from; {@link
+   * EntityFacts#NONE} for a key nothing is known for, and the container's own for a null or blank
+   * key.
+   */
+  public EntityFacts entity(String key) {
+    SessionEntity known = entities.get(keyOf(key));
+    return known == null ? EntityFacts.NONE : known.facts();
+  }
+
+  /** The session key {@code key} stands for: a null or blank one is the container's own. */
+  private static String keyOf(String key) {
+    return key == null || key.isBlank() ? CONTAINER_KEY : key;
+  }
+
+  private static String idOf(SessionEntity entity) {
+    return entity == null ? null : entity.id();
+  }
+
+  /**
+   * Records what a keyed launch says about its key's entity — the id and the facts, each kept as
+   * held when the request leaves it null — and answers the key the launch is named under. An
+   * unkeyed launch records nothing and is the container's own.
+   */
+  private String rememberEntity(AgentLaunchRequest request) {
+    String entityKey = keyOf(request.sessionKey());
+    if (CONTAINER_KEY.equals(entityKey)
+        || (request.entityId() == null && request.entityFacts() == null)) {
+      return entityKey;
+    }
+    entities.compute(
+        entityKey,
+        (k, old) ->
+            new SessionEntity(
+                request.entityId() != null ? request.entityId() : idOf(old),
+                request.entityFacts() != null
+                    ? request.entityFacts()
+                    : old == null ? EntityFacts.NONE : old.facts()));
+    return entityKey;
   }
 
   /**
@@ -455,7 +564,7 @@ public final class AgentLaunchService {
    * already carries it, then tries to deliver; false when the session turned out to have ended.
    */
   private boolean retarget(String commandId, InteractiveName session) {
-    String name = sessionName(session.surfaceKey);
+    String name = sessionName(session.entityKey, session.surfaceKey);
     synchronized (session) {
       session.pending = name.equals(session.carried) ? null : name;
     }
@@ -532,6 +641,7 @@ public final class AgentLaunchService {
     requireSignedIn(type);
 
     PinnedSession pinned = pinSession(request.resumeSessionId(), request.fork(), type);
+    String entityKey = rememberEntity(request);
     Rendered rendered =
         renderedChat(
             request.scope(),
@@ -539,7 +649,8 @@ public final class AgentLaunchService {
             pinned,
             type,
             request.agentConfigDir(),
-            request.environment());
+            request.environment(),
+            entityKey);
     LaunchSpec spec = rendered.spec();
     // Claude drives chat over stream-json; Kimi has no stdin chat, so its chat rides an in-JVM ACP
     // client with the scoped MCP servers carried on session/new.
@@ -550,7 +661,7 @@ public final class AgentLaunchService {
                     process,
                     buildAcpSessionConfig(
                         request.scope(), surface, pinned, false, request.environment()))
-            : claudeChatProtocol(pinned, surface, configurationFor(surface));
+            : claudeChatProtocol(pinned, surface, configurationFor(surface), entityKey);
 
     Command command =
         commands.launchChat(
@@ -566,7 +677,7 @@ public final class AgentLaunchService {
                 surface.key(),
                 rendered.record().toJson(),
                 rendered.redactions()));
-    trackRenameable(command.id(), surface);
+    trackRenameable(command.id(), surface, entityKey);
     // The live transcript import: the durable head a mid-run re-attach replays from.
     transcriptTail.startTail(command.id(), type);
     // Both turns go over stdin, in order: a stream-json chat only speaks over stdin, so neither can
@@ -618,7 +729,8 @@ public final class AgentLaunchService {
             : claudeChatProtocol(
                 pinned,
                 AgentSurface.EPIC_AUTONOMOUS,
-                configurationFor(AgentSurface.EPIC_AUTONOMOUS));
+                configurationFor(AgentSurface.EPIC_AUTONOMOUS),
+                CONTAINER_KEY);
     Command command =
         commands.launchChat(
             name,
@@ -633,7 +745,7 @@ public final class AgentLaunchService {
                 AgentSurface.EPIC_AUTONOMOUS.key(),
                 rendered.record().toJson(),
                 rendered.redactions()));
-    trackRenameable(command.id(), AgentSurface.EPIC_AUTONOMOUS);
+    trackRenameable(command.id(), AgentSurface.EPIC_AUTONOMOUS, CONTAINER_KEY);
     transcriptTail.startTail(command.id(), type);
     // The bootstrap rides stdin as the first user turn (a chat only speaks over stdin); the agent
     // then reads its work item over MCP. It is this surface's
@@ -666,6 +778,7 @@ public final class AgentLaunchService {
     // The first turn is the argv seed — the REPL opens on it — and anything after it is typed in
     // once the session is up. See openingTurns for why a second turn is the rare shape.
     List<String> turns = openingTurns(configurationFor(surface), request);
+    String entityKey = rememberEntity(request);
     Rendered rendered =
         renderedInteractive(
             request.scope(),
@@ -674,7 +787,8 @@ public final class AgentLaunchService {
             pinned,
             type,
             request.agentConfigDir(),
-            request.environment());
+            request.environment(),
+            entityKey);
     LaunchSpec spec = rendered.spec();
     // Renameable when it asked for a bridge under a name: Claude with the knob on. Entered before
     // the spawn so an early hook has somewhere to land, and so a setEntity racing the spawn queues
@@ -683,7 +797,7 @@ public final class AgentLaunchService {
     String rendersAs = rendered.record().remoteControlName();
     InteractiveName tracked = null;
     if (!rendersAs.isBlank()) {
-      tracked = new InteractiveName(surface.key(), rendersAs);
+      tracked = new InteractiveName(entityKey, surface.key(), rendersAs);
       renameableInteractive.put(pinned.commandId(), tracked);
     }
     CommandExitListener sweep = liveTranscriptSweep();
@@ -1054,8 +1168,30 @@ public final class AgentLaunchService {
       AgentType agentType,
       Path agentConfigDir,
       Map<String, String> environment) {
+    return renderedChat(
+        scope, surface, pinned, agentType, agentConfigDir, environment, CONTAINER_KEY);
+  }
+
+  /** {@link #renderedChat} named from {@code entityKey}'s entity — see {@link #sessionName}. */
+  Rendered renderedChat(
+      AgentMcpScope scope,
+      AgentSurface surface,
+      PinnedSession pinned,
+      AgentType agentType,
+      Path agentConfigDir,
+      Map<String, String> environment,
+      String entityKey) {
     return render(
-        scope, surface, pinned, agentType, false, false, null, agentConfigDir, environment);
+        scope,
+        surface,
+        pinned,
+        agentType,
+        false,
+        false,
+        null,
+        agentConfigDir,
+        environment,
+        entityKey);
   }
 
   /**
@@ -1069,14 +1205,17 @@ public final class AgentLaunchService {
    * with the knob off gets no bridge.
    */
   private ChatProtocolFactory claudeChatProtocol(
-      PinnedSession pinned, AgentSurface surface, AgentSurfaceConfiguration configuration) {
+      PinnedSession pinned,
+      AgentSurface surface,
+      AgentSurfaceConfiguration configuration,
+      String entityKey) {
     if (!configuration.remoteControl()) {
       return process -> new StreamJsonChatProtocol(process, pinned.commandId(), null);
     }
     return process -> {
       // Named at spawn rather than when the factory was built, with the name noted for
       // trackRenameable to compare against once the chat is registered.
-      String name = sessionName(surface.key());
+      String name = sessionName(entityKey, surface.key());
       namedAtSpawn.put(pinned.commandId(), name);
       return new StreamJsonChatProtocol(process, pinned.commandId(), name);
     };
@@ -1092,28 +1231,31 @@ public final class AgentLaunchService {
    * and renames the chat itself; one whose store came earlier is seen here, and the chat is renamed
    * from here. Either way no session keeps a name rendered from facts that have since moved.
    */
-  private void trackRenameable(String commandId, AgentSurface surface) {
+  private void trackRenameable(String commandId, AgentSurface surface, String entityKey) {
     String named = namedAtSpawn.remove(commandId);
     if (named == null) {
       return;
     }
-    renameableChats.put(commandId, surface.key());
-    String current = sessionName(surface.key());
+    renameableChats.put(commandId, new ChatName(entityKey, surface.key()));
+    String current = sessionName(entityKey, surface.key());
     if (!current.equals(named)) {
       commands.chatRename(commandId, current);
     }
   }
 
   /**
-   * The one place a session name is computed: this container's entity id, the entity facts as they
-   * stand right now, the surface and the checkout branch. The chat transport, the launch record, the
-   * interactive flag and every live rename all ask here, so the name a launch records is the name it
-   * was given.
+   * The one place a session name is computed: the session key's entity id and facts as they stand
+   * right now — for the container's own key, its {@link AgentDefaults#entityId()} — the surface and
+   * the checkout branch. The chat transport, the launch record, the interactive flag and every live
+   * rename all ask here, so the name a launch records is the name it was given.
    */
-  private String sessionName(String surfaceKey) {
+  private String sessionName(String entityKey, String surfaceKey) {
+    SessionEntity known = entities.get(entityKey);
     return AgentRemoteControl.sessionName(
-        defaults == null ? null : defaults.entityId().orElse(null),
-        entity,
+        CONTAINER_KEY.equals(entityKey)
+            ? defaults == null ? null : defaults.entityId().orElse(null)
+            : idOf(known),
+        known == null ? EntityFacts.NONE : known.facts(),
         surfaceKey,
         checkout == null ? null : checkout.branch());
   }
@@ -1215,7 +1357,17 @@ public final class AgentLaunchService {
       PinnedSession pinned,
       AgentType agentType,
       Path agentConfigDir) {
-    return render(scope, surface, pinned, agentType, false, true, null, agentConfigDir, Map.of());
+    return render(
+        scope,
+        surface,
+        pinned,
+        agentType,
+        false,
+        true,
+        null,
+        agentConfigDir,
+        Map.of(),
+        CONTAINER_KEY);
   }
 
   /**
@@ -1263,6 +1415,29 @@ public final class AgentLaunchService {
       AgentType agentType,
       Path agentConfigDir,
       Map<String, String> environment) {
+    return renderedInteractive(
+        scope,
+        surface,
+        initialContext,
+        pinned,
+        agentType,
+        agentConfigDir,
+        environment,
+        CONTAINER_KEY);
+  }
+
+  /**
+   * {@link #renderedInteractive} named from {@code entityKey}'s entity — see {@link #sessionName}.
+   */
+  Rendered renderedInteractive(
+      AgentMcpScope scope,
+      AgentSurface surface,
+      String initialContext,
+      PinnedSession pinned,
+      AgentType agentType,
+      Path agentConfigDir,
+      Map<String, String> environment,
+      String entityKey) {
     return render(
         scope,
         surface,
@@ -1272,7 +1447,8 @@ public final class AgentLaunchService {
         false,
         initialContext,
         agentConfigDir,
-        environment);
+        environment,
+        entityKey);
   }
 
   /**
@@ -1298,7 +1474,8 @@ public final class AgentLaunchService {
       boolean unattended,
       String initialContext,
       Path agentConfigDir,
-      Map<String, String> environment) {
+      Map<String, String> environment,
+      String entityKey) {
     AgentSurfaceConfiguration configuration = configurationFor(surface);
     CodingAgent agent = CodingAgentFactory.ofType(agentType);
     Attached resolved = attachedServers(scope, configuration, unattended, environment);
@@ -1351,11 +1528,12 @@ public final class AgentLaunchService {
       agent.initialContext(initialContext);
     }
     CodingAgent rendered =
-        configured(agent, agentType, pinned, configuration, interactive, agentConfigDir);
+        configured(
+            agent, agentType, pinned, configuration, interactive, agentConfigDir, entityKey);
     LaunchSpec spec = overlaid(interactive ? rendered.start() : rendered.chat(), environment);
     return new Rendered(
         spec,
-        launchRecord(configuration, agentType, rendered, resolved, interactive),
+        launchRecord(configuration, agentType, rendered, resolved, interactive, entityKey),
         // The header values this render just interpolated into the script — the host's fixed
         // headers on its own servers and the catalog's credentials. The command is stored with them
         // replaced; the process is spawned with the script as rendered.
@@ -1394,7 +1572,8 @@ public final class AgentLaunchService {
       AgentType agentType,
       CodingAgent rendered,
       Attached attached,
-      boolean interactive) {
+      boolean interactive,
+      String entityKey) {
     List<AgentLaunchRecord.AttachedServer> servers = new ArrayList<>();
     for (ScopedMcp server : attached.servers()) {
       servers.add(
@@ -1411,7 +1590,7 @@ public final class AgentLaunchService {
     // nothing came of it.
     String remoteControlName =
         configuration.remoteControl() && agentType == AgentType.CLAUDE
-            ? sessionName(configuration.surface())
+            ? sessionName(entityKey, configuration.surface())
             : "";
     return new AgentLaunchRecord(
         configuration.surface(),
@@ -1447,7 +1626,8 @@ public final class AgentLaunchService {
       PinnedSession pinned,
       AgentSurfaceConfiguration configuration,
       boolean interactive,
-      Path agentConfigDir) {
+      Path agentConfigDir,
+      String entityKey) {
     CodingAgent configured =
         withPermissions(
             withSteering(
@@ -1467,7 +1647,7 @@ public final class AgentLaunchService {
       configured.effort(configuration.effort());
     }
     if (interactive && configuration.remoteControl()) {
-      configured.remoteControl(sessionName(configuration.surface()));
+      configured.remoteControl(sessionName(entityKey, configuration.surface()));
     }
     return configured;
   }
