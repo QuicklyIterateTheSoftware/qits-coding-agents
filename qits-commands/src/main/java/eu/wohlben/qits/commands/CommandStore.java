@@ -103,8 +103,9 @@ public final class CommandStore {
    *
    * <p>Scoped structurally rather than asserted: the store only ever contains this container's
    * commands, so there is no owner to compare. It also means the check answers "no" for a session
-   * this container's owner drove in an earlier container — a resume of such a
-   * session is refused rather than allowed, which is the fail-closed direction.
+   * this container's owner drove in an earlier container. The launch path does not stop there: such
+   * a session is resumable when its transcript survived on the shared credential volume, and refused
+   * otherwise, which is the fail-closed direction.
    */
   public boolean ownsSession(String sessionId) {
     return commands.values().stream()

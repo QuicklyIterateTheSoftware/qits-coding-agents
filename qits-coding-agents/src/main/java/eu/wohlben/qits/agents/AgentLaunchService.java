@@ -192,6 +192,14 @@ public final class AgentLaunchService {
    */
   static final String QITS_HEADERS_HELPER_COMMAND = "qits mcp-credential";
 
+  /**
+   * The context size {@link AgentSurface#PROJECT_WORK} auto-compacts at ({@code --autocompact}).
+   * The front desk is one long-lived session, resumed across container recreations rather than
+   * started afresh, so it is let grow well past the harness's own threshold before it compacts.
+   * Every other surface launches without the flag.
+   */
+  static final String PROJECT_WORK_AUTOCOMPACT = "400k";
+
   private final AgentCommands commands;
   private final AgentAuthStatus authStatus;
   private final AgentTranscriptService transcripts;
@@ -1005,6 +1013,11 @@ public final class AgentLaunchService {
    * Claude session can't be resumed under Kimi, and its transcript layout and auth probe are
    * harness-specific), overriding any explicit choice or default. A fresh launch resolves normally:
    * explicit choice → the configured default → CLAUDE.
+   *
+   * <p>A resume of a session this container never drove — one an earlier container did, whose
+   * transcript survived on the credential volume — has no recorded harness here, and resolves like a
+   * fresh launch. That is the harness its transcript is then looked for under (see {@link
+   * #pinSession}), so a wrong guess is refused rather than resumed under the other harness.
    */
   private AgentType resolveHarness(String resumeSessionId, AgentType explicit) {
     if (resumeSessionId != null) {
@@ -1023,9 +1036,12 @@ public final class AgentLaunchService {
    * learned from the harness's SessionStart hook. Resume reuses {@code resumeSessionId} in place
    * ({@code RESUMED}); fork branches it into a fresh pin ({@code FORKED}, with the origin recorded).
    *
-   * <p>Resume and fork require the session to belong to <em>this container</em>. That is narrower
-   * than a "belongs to this project" check, and it fails closed: a session driven before a
-   * container recreate is refused, because {@code CommandStore} did not survive to vouch for it.
+   * <p>Resume and fork require the session to belong to <em>this container</em>, or its transcript
+   * to be on the shared credential volume. {@code CommandStore} does not survive a container
+   * recreate, so it cannot vouch for a session an earlier container drove; the transcript can, and
+   * it is what the harness resumes from anyway ({@link AgentTranscripts#exists(String, AgentType,
+   * String)}, under the resolved harness's config dir). Without either the check fails closed: the
+   * session is refused.
    */
   PinnedSession pinSession(String resumeSessionId, boolean fork, AgentType agentType) {
     String commandId = UUID.randomUUID().toString();
@@ -1043,7 +1059,8 @@ public final class AgentLaunchService {
               UUID.randomUUID().toString(), AgentSessionSource.PINNED, null, null, Instant.now()));
     }
     requireSessionId(resumeSessionId, "session id", agentType);
-    if (!commands.ownsSession(resumeSessionId)) {
+    if (!commands.ownsSession(resumeSessionId)
+        && !AgentTranscripts.exists(claudeMount, agentType, resumeSessionId)) {
       throw new InvalidCommandRequestException(
           "Session "
               + resumeSessionId
@@ -1645,6 +1662,12 @@ public final class AgentLaunchService {
     }
     if (!configuration.effort().isBlank()) {
       configured.effort(configuration.effort());
+    }
+    // The front desk is one long-lived session that is resumed rather than restarted, so it is the
+    // one surface let run to a large context before it compacts. Every other surface keeps the
+    // harness's own threshold.
+    if (configuration.surface().equals(AgentSurface.PROJECT_WORK.key())) {
+      configured.autocompact(PROJECT_WORK_AUTOCOMPACT);
     }
     if (interactive && configuration.remoteControl()) {
       configured.remoteControl(sessionName(entityKey, configuration.surface()));

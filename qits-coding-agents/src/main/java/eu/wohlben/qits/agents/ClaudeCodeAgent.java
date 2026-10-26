@@ -107,6 +107,10 @@ public class ClaudeCodeAgent extends CodingAgent {
       // level fails at the harness, where the answer is authoritative.
       command.append(" --effort ").append(shellQuote(effort));
     }
+    if (autocompact != null && !autocompact.isBlank()) {
+      // --autocompact <size>: the context size the session compacts at, passed as configured.
+      command.append(" --autocompact ").append(shellQuote(autocompact));
+    }
     String appendix = systemPromptAppendix == null ? "" : systemPromptAppendix;
     if (agentConfigDir != null) {
       appendix =

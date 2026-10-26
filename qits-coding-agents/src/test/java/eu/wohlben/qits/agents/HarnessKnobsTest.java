@@ -55,11 +55,21 @@ class HarnessKnobsTest {
     }
 
     @Test
+    void autocompactRidesEveryShapeRightAfterTheEffort() {
+      assertTrue(
+          claude().effort("high").autocompact("400k").chat().script()
+              .contains(" --effort 'high' --autocompact '400k'"));
+      assertTrue(claude().autocompact("400k").start().script().contains(" --autocompact '400k'"));
+      assertTrue(claude().autocompact("400k").run("go").script().contains(" --autocompact '400k'"));
+    }
+
+    @Test
     void blanksAreTheHarnessesOwnChoiceRatherThanEmptyFlags() {
-      String script = claude().model("").effort("   ").chat().script();
+      String script = claude().model("").effort("   ").autocompact(" ").chat().script();
 
       assertFalse(script.contains("--model"), script);
       assertFalse(script.contains("--effort"), script);
+      assertFalse(script.contains("--autocompact"), script);
     }
 
     @Test
@@ -117,6 +127,14 @@ class HarnessKnobsTest {
       CodingAgent agent = kimi().appendSystemPrompt(AgentLaunchService.TICKETS_DESK_PROMPT);
 
       assertTrue(agent.renderNotes().get(0).contains("system-prompt appendix"), agent.renderNotes().toString());
+    }
+
+    @Test
+    void autocompactIsIgnored() {
+      CodingAgent agent = kimi().autocompact("400k");
+
+      assertFalse(agent.start().script().contains("autocompact"), agent.start().script());
+      assertFalse(agent.run("go").script().contains("autocompact"));
     }
 
     @Test

@@ -20,6 +20,7 @@ import eu.wohlben.qits.commands.CommandLogService;
 import eu.wohlben.qits.commands.CommandStore;
 import eu.wohlben.qits.commands.CheckoutContext;
 import eu.wohlben.qits.commands.InvalidCommandRequestException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
@@ -72,6 +73,12 @@ class AgentLaunchServiceProjectHostTest {
 
   @TempDir Path workspaceRoot;
 
+  /**
+   * Where the launch service thinks the credential volume mounts. {@link #CLAUDE_MOUNT} for every
+   * test that only reads it back; a temp dir for one that puts a transcript on it.
+   */
+  private String claudeMount;
+
   private Commands commands;
   private boolean loggedIn;
   private AgentType defaultType;
@@ -107,6 +114,7 @@ class AgentLaunchServiceProjectHostTest {
   @BeforeEach
   void setUp() {
     commands = new Commands();
+    claudeMount = CLAUDE_MOUNT;
     loggedIn = true;
     defaultType = AgentType.CLAUDE;
     activityTracking = true;
@@ -412,13 +420,13 @@ class AgentLaunchServiceProjectHostTest {
     tail = new AgentTranscriptTailService(transcripts, new CommandLogService(store, null));
     return new AgentLaunchService(
         commands,
-        new AgentAuthStatus(probe, CLAUDE_MOUNT, workspaceRoot),
+        new AgentAuthStatus(probe, claudeMount, workspaceRoot),
         transcripts,
         tail,
         defaults,
         mcpServers,
         CHECKOUT_CONTEXT,
-        CLAUDE_MOUNT,
+        claudeMount,
         HOOKS_PORT,
         PROJECT_TASK_PROMPT_BOOTSTRAP);
   }
@@ -533,6 +541,32 @@ class AgentLaunchServiceProjectHostTest {
 
       assertTrue(spec.script().startsWith("exec claude 'do the thing'"), spec.script());
       assertTrue(spec.interactive());
+    }
+
+    @Test
+    void onlyTheProjectDeskCompactsLate() {
+      // The front desk is one long-lived, resumed session; every other surface — a refinement room
+      // among them — keeps the harness's own threshold.
+      AgentLaunchService service = service();
+      AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
+
+      String desk =
+          service
+              .renderInteractive(
+                  AgentMcpScope.REPOSITORY, AgentSurface.PROJECT_WORK, null, pinned, AgentType.CLAUDE)
+              .script();
+      String deskChat =
+          service
+              .renderChat(AgentMcpScope.REPOSITORY, AgentSurface.PROJECT_WORK, pinned, AgentType.CLAUDE)
+              .script();
+      String room =
+          service
+              .renderChat(AgentMcpScope.REPOSITORY, AgentSurface.EPIC_CHAT, pinned, AgentType.CLAUDE)
+              .script();
+
+      assertTrue(desk.contains(" --autocompact '400k'"), desk);
+      assertTrue(deskChat.contains(" --autocompact '400k'"), deskChat);
+      assertFalse(room.contains("--autocompact"), room);
     }
 
     @Test
@@ -839,9 +873,10 @@ class AgentLaunchServiceProjectHostTest {
     }
 
     @Test
-    void resumeOfASessionFromAPreviousContainerIsRefused() {
-      // THE behaviour change of this move. CommandStore does not outlive the container, so it
-      // cannot vouch for a session an earlier one drove. It fails closed: refused, not allowed.
+    void resumeOfASessionFromAPreviousContainerWithoutATranscriptIsRefused() {
+      // CommandStore does not outlive the container, so it cannot vouch for a session an earlier one
+      // drove. Without a transcript on the credential volume either, it fails closed: refused.
+      claudeMount = workspaceRoot.resolve("claude-home").toString();
       AgentLaunchService service = service();
 
       InvalidCommandRequestException refused =
@@ -852,6 +887,55 @@ class AgentLaunchServiceProjectHostTest {
                       "33333333-3333-3333-3333-333333333333", false, AgentType.CLAUDE));
 
       assertTrue(refused.getMessage().contains("not started in this container"), refused.getMessage());
+    }
+
+    @Test
+    void resumeOfASessionFromAPreviousContainerWhoseTranscriptSurvivedContinuesIt()
+        throws Exception {
+      // The front desk across a container recreate: the store is new, the volume is not, and the
+      // harness resumes from the transcript on it.
+      String session = "33333333-3333-3333-3333-333333333333";
+      Path home = workspaceRoot.resolve("claude-home");
+      Path transcript = home.resolve(".claude/projects/-workspace/" + session + ".jsonl");
+      Files.createDirectories(transcript.getParent());
+      Files.writeString(transcript, "{}\n");
+      claudeMount = home.toString();
+
+      service()
+          .launchInteractive(
+              new AgentLaunchRequest(
+                  AgentMcpScope.REPOSITORY,
+                  AgentSurface.PROJECT_WORK,
+                  AgentLaunchMode.INTERACTIVE,
+                  null,
+                  session,
+                  false,
+                  false,
+                  null));
+
+      assertTrue(commands.last().script().contains(" --resume " + session), commands.last().script());
+      assertEquals(AgentSessionSource.RESUMED, commands.last().session().source());
+      assertEquals(session, commands.last().session().sessionId());
+      assertEquals("CLAUDE", commands.last().agent().agentType(), "the request's harness, resolved");
+    }
+
+    @Test
+    void aSurvivingTranscriptIsLookedForUnderTheResolvedHarnessOnly() throws Exception {
+      String session = "33333333-3333-3333-3333-333333333333";
+      Path home = workspaceRoot.resolve("claude-home");
+      Path transcript = home.resolve(".claude/projects/-workspace/" + session + ".jsonl");
+      Files.createDirectories(transcript.getParent());
+      Files.writeString(transcript, "{}\n");
+      claudeMount = home.toString();
+
+      assertThrows(
+          InvalidCommandRequestException.class,
+          () -> service().pinSession(KIMI_SESSION, false, AgentType.KIMI),
+          "a Claude transcript does not vouch for a Kimi resume");
+      Files.createDirectories(home.resolve(".kimi-code/sessions/abc123/" + KIMI_SESSION));
+      assertEquals(
+          AgentSessionSource.RESUMED,
+          service().pinSession(KIMI_SESSION, false, AgentType.KIMI).ref().source());
     }
 
     @Test

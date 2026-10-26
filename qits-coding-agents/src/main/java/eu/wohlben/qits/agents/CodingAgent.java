@@ -58,6 +58,13 @@ public abstract class CodingAgent {
   protected String effort;
 
   /**
+   * The context size at which the session compacts itself, or null for the harness's own threshold.
+   * A free string for the same reason as {@link #effort}: the accepted values ({@code 400k}) belong
+   * to the binary in the image.
+   */
+  protected String autocompact;
+
+  /**
    * The name a Remote Control session is listed under, or null to leave Remote Control off.
    *
    * <p>Only the interactive shape has a flag for it ({@code --remote-control "<name>"}); the chat
@@ -179,6 +186,15 @@ public abstract class CodingAgent {
    */
   public CodingAgent effort(String effort) {
     this.effort = effort;
+    return this;
+  }
+
+  /**
+   * Sets the context size the session auto-compacts at. Honoured by harnesses that have the knob
+   * (Claude's {@code --autocompact}); Kimi Code has none and ignores it.
+   */
+  public CodingAgent autocompact(String autocompact) {
+    this.autocompact = autocompact;
     return this;
   }
 
