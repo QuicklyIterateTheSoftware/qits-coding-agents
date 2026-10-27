@@ -23,6 +23,21 @@ public class ClaudeCodeAgent extends CodingAgent {
   /** Set on the interactive harness, so it does not ask whether to trust the agent's folder. */
   static final String SANDBOXED = "CLAUDE_CODE_SANDBOXED";
 
+  /**
+   * The settings that turn off Claude's own attribution: no {@code Co-Authored-By} or {@code
+   * Claude-Session} trailer on a commit, no "Generated with Claude Code" line on a PR. A commit names
+   * the agent that made it, not the harness (qits-1666). No environment variable does this, and
+   * the shared settings file sits on a volume every container uses, so each launch passes it in its
+   * own {@code --settings}. The empty-fields form works from CLI 2.0.62 on.
+   */
+  static final String NO_ATTRIBUTION =
+      "{\"attribution\":{\"commit\":\"\",\"pr\":\"\",\"sessionUrl\":false}}";
+
+  /** {@link #NO_ATTRIBUTION} as a {@code --settings} argument, for a launch with no other settings. */
+  public static String noAttributionFlag() {
+    return " --settings " + shellQuote(NO_ATTRIBUTION);
+  }
+
   @Override
   public LaunchSpec start() {
     StringBuilder command = new StringBuilder("exec claude");
@@ -145,9 +160,10 @@ public class ClaudeCodeAgent extends CodingAgent {
       settings.put("autoMemoryDirectory", agentConfigDir.resolve("memory").toString());
       settings.put("enabledPlugins", agentEnabledPlugins.copy());
     }
-    if (settings != null) {
-      command.append(" --settings ").append(shellQuote(settings.encode()));
-    }
+    // Always last into the one --settings, so every launch carries it.
+    settings = settings != null ? settings : new JsonObject();
+    settings.mergeIn(new JsonObject(NO_ATTRIBUTION));
+    command.append(" --settings ").append(shellQuote(settings.encode()));
     if (agentConfigDir != null) {
       // The checkout carries .claude-plugin/plugin.json, so it loads as a plugin and its skills/ are
       // this session's skills.

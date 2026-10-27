@@ -994,7 +994,7 @@ public final class AgentLaunchService {
           // onboarding renders a paste-the-code prompt over the PTY and reads it from stdin, so an
           // operator can complete sign-in in the terminal. The `auth login` subcommand blocks on a
           // loopback HTTP callback the host browser can never reach.
-          new LaunchSpec("exec claude", true, env);
+          new LaunchSpec("exec claude" + ClaudeCodeAgent.noAttributionFlag(), true, env);
       case KIMI ->
           // Kimi login is a device-code flow that prints the verification URL + user code and
           // polls, so it works plainly over a TTY.

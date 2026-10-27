@@ -55,7 +55,7 @@ class ClaudeAgentConfigTest {
         "{\"hooks\":{\"SessionStart\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"curl -fsS"
             + " -m 5 -X POST -H \\\"Content-Type: application/json\\\" --data-binary @- "
             + REPORT_URL
-            + "\"}]}]}}";
+            + "\"}]}]},\"attribution\":{\"commit\":\"\",\"pr\":\"\",\"sessionUrl\":false}}";
 
     assertEquals(
         "exec claude --print --input-format stream-json --output-format stream-json"
@@ -90,6 +90,22 @@ class ClaudeAgentConfigTest {
   }
 
   @Test
+  void everyLaunchTurnsOffClaudesAttributionInItsOneSettingsLayer() {
+    // qits-1666: no Co-Authored-By or Claude-Session trailer, no PR line. One --settings only, since
+    // the CLI keeps the last.
+    JsonObject off = new JsonObject(ClaudeCodeAgent.NO_ATTRIBUTION).getJsonObject("attribution");
+    for (String script :
+        List.of(
+            configured(AgentType.CLAUDE).agentConfig(DIR, PLUGINS).chat().script(),
+            configured(AgentType.CLAUDE).start().script(),
+            configured(AgentType.CLAUDE).run("go").script(),
+            CodingAgentFactory.ofType(AgentType.CLAUDE).start().script())) {
+      assertEquals(1, occurrences(script, " --settings "), script);
+      assertEquals(off, ClaudeWorkLinksTest.settingsOf(script).getJsonObject("attribution"), script);
+    }
+  }
+
+  @Test
   void withoutHooksTheDirStillRendersASettingsLayer() {
     String script =
         CodingAgentFactory.ofType(AgentType.CLAUDE).agentConfig(DIR, PLUGINS).chat().script();
@@ -99,7 +115,8 @@ class ClaudeAgentConfigTest {
     assertEquals(
         new JsonObject()
             .put("autoMemoryDirectory", "/agent-config/agent-1/memory")
-            .put("enabledPlugins", PLUGINS),
+            .put("enabledPlugins", PLUGINS)
+            .put("attribution", new JsonObject(ClaudeCodeAgent.NO_ATTRIBUTION).getJsonObject("attribution")),
         settings);
     // No configured prompt: the sentence is the whole appendix.
     assertTrue(

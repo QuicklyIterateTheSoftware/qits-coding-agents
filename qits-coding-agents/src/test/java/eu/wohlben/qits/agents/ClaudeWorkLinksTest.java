@@ -3,7 +3,6 @@ package eu.wohlben.qits.agents;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.vertx.core.json.JsonArray;
@@ -167,7 +166,9 @@ class ClaudeWorkLinksTest {
         settingsOf(claude().workLinks(true, List.of("qits"), "example.test").start().script());
 
     assertNotNull(settings);
-    assertEquals(List.of("hooks", "statusLine", "footerLinksRegexes"), List.copyOf(settings.fieldNames()));
+    assertEquals(
+        List.of("hooks", "statusLine", "footerLinksRegexes", "attribution"),
+        List.copyOf(settings.fieldNames()));
     assertEquals(List.of("MessageDisplay"), List.copyOf(settings.getJsonObject("hooks").fieldNames()));
   }
 
@@ -184,7 +185,8 @@ class ClaudeWorkLinksTest {
 
     assertEquals(before, off);
     assertEquals(
-        "exec claude", claude().workLinks(false, List.of("qits"), "example.test").start().script());
+        "exec claude" + ClaudeCodeAgent.noAttributionFlag(),
+        claude().workLinks(false, List.of("qits"), "example.test").start().script());
   }
 
   @Test
@@ -213,10 +215,13 @@ class ClaudeWorkLinksTest {
       assertFalse(settings.containsKey("statusLine"), script);
       assertFalse(settings.containsKey("footerLinksRegexes"), script);
     }
-    // And with nothing else to put in a settings layer, there is no layer at all.
-    assertNull(
+    // And with nothing else to put in a settings layer, the layer only turns off attribution.
+    JsonObject attributionOnly = new JsonObject(ClaudeCodeAgent.NO_ATTRIBUTION);
+    assertEquals(
+        attributionOnly,
         settingsOf(claude().workLinks(true, List.of("qits"), "example.test").chat().script()));
-    assertNull(
+    assertEquals(
+        attributionOnly,
         settingsOf(claude().workLinks(true, List.of("qits"), "example.test").run("hi").script()));
   }
 

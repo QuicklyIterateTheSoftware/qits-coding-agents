@@ -409,7 +409,9 @@ class AgentLaunchServiceWorkspaceHostTest {
     @Test
     void theLoginTerminalOverlaysTheRightHomeForEachHarness() {
       assertEquals(CLAUDE_MOUNT, service().renderLogin(AgentType.CLAUDE).environment().get("HOME"));
-      assertEquals("exec claude", service().renderLogin(AgentType.CLAUDE).script());
+      assertEquals(
+          "exec claude" + ClaudeCodeAgent.noAttributionFlag(),
+          service().renderLogin(AgentType.CLAUDE).script());
       assertEquals(
           CLAUDE_MOUNT + "/.kimi-code",
           service().renderLogin(AgentType.KIMI).environment().get("KIMI_CODE_HOME"));

@@ -17,11 +17,14 @@ public class CodingAgentFactoryTest {
   private static final String ACTIONS_URL =
       "http://localhost:8080/actions/mcp?repositoryId=11111111-1111-1111-1111-111111111111";
 
+  /** Every launch ends with the settings that turn off Claude's attribution (qits-1666). */
+  private static final String NA = ClaudeCodeAgent.noAttributionFlag();
+
   @Test
   public void interactiveWithoutMcpJustExecsClaude() {
     LaunchSpec spec = CodingAgentFactory.ofType(AgentType.CLAUDE).start();
 
-    assertEquals("exec claude", spec.script());
+    assertEquals("exec claude" + NA, spec.script());
     assertTrue(spec.interactive());
   }
 
@@ -30,7 +33,7 @@ public class CodingAgentFactoryTest {
     // Opt-in (off by default); renders flat text so a captured PTY session log stays readable.
     LaunchSpec spec = CodingAgentFactory.ofType(AgentType.CLAUDE).flatOutput().start();
 
-    assertEquals("exec claude --ax-screen-reader", spec.script());
+    assertEquals("exec claude --ax-screen-reader" + NA, spec.script());
   }
 
   @Test
@@ -64,14 +67,14 @@ public class CodingAgentFactoryTest {
             .initialContext("please look at the failing test")
             .start();
 
-    assertEquals("exec claude 'please look at the failing test'", spec.script());
+    assertEquals("exec claude 'please look at the failing test'" + NA, spec.script());
   }
 
   @Test
   public void runRendersPrintModeWithTheEmbeddedPrompt() {
     LaunchSpec spec = CodingAgentFactory.ofType(AgentType.CLAUDE).run("resolve the conflict");
 
-    assertEquals("claude -p 'resolve the conflict'", spec.script());
+    assertEquals("claude -p 'resolve the conflict'" + NA, spec.script());
     assertFalse(spec.interactive());
   }
 
@@ -85,23 +88,23 @@ public class CodingAgentFactoryTest {
     // embedded ' is escaped as '\'' so it can't close the quote early. The whole prompt is one arg
     // —
     // no separator runs, no substitution expands.
-    assertEquals("claude -p 'a'\\''b`c$(d);e'", spec.script());
+    assertEquals("claude -p 'a'\\''b`c$(d);e'" + NA, spec.script());
   }
 
   @Test
   public void modelFlagRendersOnEveryLaunchVariant() {
     assertEquals(
-        "claude -p 'hi' --model 'haiku'",
+        "claude -p 'hi' --model 'haiku'" + NA,
         CodingAgentFactory.ofType(AgentType.CLAUDE).model("haiku").run("hi").script());
     assertEquals(
-        "exec claude --model 'haiku'",
+        "exec claude --model 'haiku'" + NA,
         CodingAgentFactory.ofType(AgentType.CLAUDE).model("haiku").start().script());
     assertTrue(
         CodingAgentFactory.ofType(AgentType.CLAUDE)
             .model("haiku")
             .chat()
             .script()
-            .endsWith(" --model 'haiku'"));
+            .endsWith(" --model 'haiku'" + NA));
   }
 
   @Test
@@ -115,7 +118,8 @@ public class CodingAgentFactoryTest {
 
     assertEquals(
         "exec claude --print --input-format stream-json --output-format stream-json"
-            + " --include-hook-events --verbose",
+            + " --include-hook-events --verbose"
+            + NA,
         spec.script());
     assertFalse(spec.interactive());
   }
@@ -135,30 +139,30 @@ public class CodingAgentFactoryTest {
   @Test
   public void sessionIdPinsAFreshSessionOnEveryLaunchVariant() {
     assertEquals(
-        "exec claude --session-id " + SESSION_A,
+        "exec claude --session-id " + SESSION_A + NA,
         CodingAgentFactory.ofType(AgentType.CLAUDE).sessionId(SESSION_A).start().script());
     assertEquals(
-        "claude -p 'hi' --session-id " + SESSION_A,
+        "claude -p 'hi' --session-id " + SESSION_A + NA,
         CodingAgentFactory.ofType(AgentType.CLAUDE).sessionId(SESSION_A).run("hi").script());
     assertTrue(
         CodingAgentFactory.ofType(AgentType.CLAUDE)
             .sessionId(SESSION_A)
             .chat()
             .script()
-            .endsWith(" --session-id " + SESSION_A));
+            .endsWith(" --session-id " + SESSION_A + NA));
   }
 
   @Test
   public void resumeContinuesTheSessionInPlace() {
     assertEquals(
-        "exec claude --resume " + SESSION_A,
+        "exec claude --resume " + SESSION_A + NA,
         CodingAgentFactory.ofType(AgentType.CLAUDE).resume(SESSION_A).start().script());
   }
 
   @Test
   public void resumeWithForkBranchesIntoTheNewPinnedId() {
     assertEquals(
-        "exec claude --resume " + SESSION_A + " --fork-session --session-id " + SESSION_B,
+        "exec claude --resume " + SESSION_A + " --fork-session --session-id " + SESSION_B + NA,
         CodingAgentFactory.ofType(AgentType.CLAUDE)
             .resume(SESSION_A)
             .fork(SESSION_B)
