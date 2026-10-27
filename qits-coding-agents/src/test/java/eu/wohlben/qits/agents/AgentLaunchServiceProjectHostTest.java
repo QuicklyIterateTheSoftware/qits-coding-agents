@@ -451,8 +451,14 @@ class AgentLaunchServiceProjectHostTest {
     @Test
     void theOnlyPlatformServerIsQits() {
       // qits-1174: the per-service servers are retired. --strict-mcp-config is what stops the
-      // shared /claude-home volume putting any of them back.
-      AgentLaunchService service = service();
+      // shared /claude-home volume putting any of them back. A fixed header from the host is what
+      // gets the qits server rendered at all (qits-876: a host with none is left out entirely, see
+      // QitsPlatformServer.claudeLeavesItOutAndPreApprovesNothingWithoutFixedHeaders).
+      AgentLaunchService service =
+          serviceWith(
+              new ProjectHostMcpServers(
+                  Optional.of(ProjectHostMcpServers.PLATFORM_URL),
+                  Map.of("Authorization", "Bearer t")));
       AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
 
       String script =
@@ -490,7 +496,12 @@ class AgentLaunchServiceProjectHostTest {
 
     @Test
     void aChatCarriesTheScopedServerTheHomeOverlayAndTheHook() {
-      AgentLaunchService service = service();
+      // A fixed header from the host is what gets the qits server rendered at all (qits-876).
+      AgentLaunchService service =
+          serviceWith(
+              new ProjectHostMcpServers(
+                  Optional.of(ProjectHostMcpServers.PLATFORM_URL),
+                  Map.of("Authorization", "Bearer t")));
       AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
 
       LaunchSpec spec =
@@ -517,7 +528,12 @@ class AgentLaunchServiceProjectHostTest {
 
     @Test
     void anAutonomousRunMarksEveryServerReadOnly() {
-      AgentLaunchService service = service();
+      // A fixed header from the host is what gets the qits server rendered at all (qits-876).
+      AgentLaunchService service =
+          serviceWith(
+              new ProjectHostMcpServers(
+                  Optional.of(ProjectHostMcpServers.PLATFORM_URL),
+                  Map.of("Authorization", "Bearer t")));
       AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
 
       LaunchSpec spec =
@@ -1409,7 +1425,14 @@ class AgentLaunchServiceProjectHostTest {
               SeededConfigurationDocument.server("repository", true, true, false, true, List.of()),
               SeededConfigurationDocument.server("qits", false, false, false, false, List.of()));
 
-      Command command = service().launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK));
+      // A fixed header from the host is what gets the qits server rendered at all (qits-876), so
+      // there is something here for the 'repository' skip to be checked beside.
+      Command command =
+          serviceWith(
+                  new ProjectHostMcpServers(
+                      Optional.of(ProjectHostMcpServers.PLATFORM_URL),
+                      Map.of("Authorization", "Bearer t")))
+              .launchChat(chat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK));
 
       String script = commands.last().script();
       assertFalse(script.contains("\"repository\":"), script);
@@ -1640,7 +1663,10 @@ class AgentLaunchServiceProjectHostTest {
   /**
    * The central {@code qits} platform server — reserved as a key (see {@link
    * AgentConfigurationDocumentTest}) and pre-approved on Claude wherever it is attached, because the
-   * bearer on each call already decides what it may do.
+   * bearer on each call already decides what it may do. A host with no fixed bearer for it has
+   * nothing to authenticate it with at all (qits-876: every live container now carries a
+   * non-expiring {@code QITS_TOKEN} instead of the retired hourly commissioned-client pair), so
+   * Claude leaves the server out of its config entirely rather than rendering a dead, 401-only tool.
    */
   @Nested
   class QitsPlatformServer {
@@ -1652,11 +1678,10 @@ class AgentLaunchServiceProjectHostTest {
     }
 
     @Test
-    void claudeRendersItWithAHeadersHelperAndPreApprovesEveryTool() {
-      // The defect this covers: a daemon hands the library an ordinary ScopedMcp(key "qits", url),
-      // and the library alone has to know this one key needs a headers helper rather than a bare
-      // url, because the central server answers 401 with nothing
-      // in the --mcp-config to say why.
+    void claudeLeavesItOutAndPreApprovesNothingWithoutFixedHeaders() {
+      // The defect this covers: a daemon hands the library an ordinary ScopedMcp(key "qits", url)
+      // with no header, and the library alone has to know it has no way to authenticate this
+      // server — rendering it anyway would be a tool that always answers 401.
       AgentLaunchService service = serviceWith(withQits());
       AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
 
@@ -1665,39 +1690,15 @@ class AgentLaunchServiceProjectHostTest {
               .renderChat(AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK, pinned, AgentType.CLAUDE)
               .script();
 
-      assertTrue(
-          script.contains(
-              "\"qits\":{\"type\":\"http\",\"url\":\"http://dev-qits-platform-access-mcp-service:8080/mcp\","
-                  + "\"headersHelper\":\"qits mcp-credential\"}"),
-          script);
-      assertTrue(
-          script.contains("--allowedTools 'mcp__qits__*'"),
-          "the qits server is pre-approved on every surface: " + script);
-    }
-
-    @Test
-    void anAutonomousRunMarksTheQitsUrlReadOnly() {
-      // The fence lives in the central server: with agentReadOnly=true it lists and runs only
-      // commands marked as reads, and fails closed. The headers-helper entry carries the marked url.
-      AgentLaunchService service = serviceWith(withQits());
-      AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
-
-      String script =
-          service
-              .renderAutonomousChat(
-                  AgentMcpScope.PROJECT, AgentSurface.EPIC_AUTONOMOUS, pinned, AgentType.CLAUDE)
-              .script();
-
-      assertTrue(
-          script.contains(
-              "\"qits\":{\"type\":\"http\",\"url\":\"http://dev-qits-platform-access-mcp-service:8080/mcp?agentReadOnly=true\","
-                  + "\"headersHelper\":\"qits mcp-credential\"}"),
-          script);
+      assertFalse(script.contains("\"qits\":"), script);
+      assertFalse(
+          script.contains("--allowedTools"),
+          "no pre-approval for a server that was not rendered: " + script);
     }
 
     @Test
     void aChatLeavesTheQitsUrlUnmarked() {
-      AgentLaunchService service = serviceWith(withQits());
+      AgentLaunchService service = serviceWith(withQitsAndABearer());
       AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
 
       String script =
@@ -1733,10 +1734,12 @@ class AgentLaunchServiceProjectHostTest {
     }
 
     @Test
-    void fixedHeadersFromTheHostReplaceTheHeadersHelperAndKeepThePreApproval() {
+    void fixedHeadersFromTheHostRenderOnTheQitsServerReadOnlyMarkedAndPreApproved() {
       // qits-625: a host whose agent reaches the platform through the edge hands every platform
-      // server a fixed, non-expiring bearer. On the qits key that replaces the helper outright —
-      // two credential sources on one entry would leave which one Claude sends to chance.
+      // server a fixed, non-expiring bearer, which is what lets Claude render this server at all
+      // (qits-876: a host with none is left out instead, see claudeLeavesItOutAndPreApprovesNothing
+      // WithoutFixedHeaders above). The fence lives in the central server itself: with
+      // agentReadOnly=true it lists and runs only commands marked as reads, and fails closed.
       AgentLaunchService service = serviceWith(withQitsAndABearer());
       AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
 
@@ -1751,7 +1754,6 @@ class AgentLaunchServiceProjectHostTest {
               "\"qits\":{\"type\":\"http\",\"url\":\"http://dev-qits-platform-access-mcp-service:8080/mcp?agentReadOnly=true\","
                   + "\"headers\":{\"Authorization\":\"Bearer t\"}}"),
           script);
-      assertFalse(script.contains("headersHelper"), script);
       assertTrue(script.contains("--allowedTools 'mcp__qits__*'"), script);
     }
 
@@ -1821,7 +1823,12 @@ class AgentLaunchServiceProjectHostTest {
                   "qits", QITS_URL, List.of(), Map.of("Authorization", "Bearer host")));
     }
 
-    /** A host with the {@code qits} server and no headers: Claude renders the headers helper. */
+    /**
+     * A host with the {@code qits} server and no headers of its own: every test here pairs it with
+     * a launch overlay that supplies {@code QITS_TOKEN}, which becomes the server's bearer (see
+     * {@link #theOverlaysTokenReachesTheProcessAndBecomesTheQitsBearer}) — without one, Claude would
+     * leave the server out entirely (qits-876).
+     */
     private AgentMcpServers hostWithoutHeaders() {
       return scope -> List.of(new ScopedMcp("qits", QITS_URL, List.of()));
     }
@@ -1854,7 +1861,6 @@ class AgentLaunchServiceProjectHostTest {
                       + QITS_URL
                       + "\",\"headers\":{\"Authorization\":\"Bearer t2\"}}"),
           launch.script());
-      assertFalse(launch.script().contains("headersHelper"), launch.script());
       assertEquals(
           List.of("Bearer t2"),
           launch.agent().redactions(),
@@ -2695,8 +2701,13 @@ class AgentLaunchServiceProjectHostTest {
     @Test
     void theComposedRunRendersItsFenceFromEitherSide() {
       // The autonomous shape marks every url read-only, and the seeded epic.autonomous row carries
-      // readOnly too. The two must agree rather than one double-marking the url.
-      AgentLaunchService service = service();
+      // readOnly too. The two must agree rather than one double-marking the url. A fixed header
+      // from the host is what gets the qits server rendered at all (qits-876).
+      AgentLaunchService service =
+          serviceWith(
+              new ProjectHostMcpServers(
+                  Optional.of(ProjectHostMcpServers.PLATFORM_URL),
+                  Map.of("Authorization", "Bearer t")));
       AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
 
       configurations = AgentSurfaceConfigurations.shipped();

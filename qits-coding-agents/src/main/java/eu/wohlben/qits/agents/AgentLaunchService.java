@@ -180,19 +180,6 @@ public final class AgentLaunchService {
   static final List<String> QITS_PRE_APPROVED_TOOLS = List.of("mcp__qits__*");
 
   /**
-   * The headers helper Claude runs at connect for {@link #QITS_MCP_KEY} — see {@link
-   * McpServers#httpMcpWithHeadersHelper}. Interim (qits-630), owner 2026-10-01: a container's
-   * commissioned-client bearer lasts one hour, so a header written once at launch would go stale
-   * mid-session; this command is re-run on every connect instead.
-   *
-   * <p>Still used for hosts that supply no headers — DIRECT workspaces, and the projects daemon. A
-   * host that hands the {@code qits} server fixed {@link ScopedMcp#headers()} (a RUNNER workspace's
-   * non-expiring runner-issued token, qits-684) gets those rendered instead and no helper
-   * (qits-625); this constant retires once no host is left without them.
-   */
-  static final String QITS_HEADERS_HELPER_COMMAND = "qits mcp-credential";
-
-  /**
    * The context size {@link AgentSurface#PROJECT_WORK} auto-compacts at ({@code --autocompact}).
    * The front desk is one long-lived session, resumed across container recreations rather than
    * started afresh, so it is let grow well past the harness's own threshold before it compacts.
@@ -1501,14 +1488,16 @@ public final class AgentLaunchService {
       // Two rules for the central `qits` platform server (qits-630, owner-decided), Claude only —
       // Kimi gets this server only with fixed headers (qits-625), see buildAcpSessionConfig:
       if (agentType == AgentType.CLAUDE && QITS_MCP_KEY.equals(server.key())) {
-        // it carries the host's fixed headers when there are any (a RUNNER workspace's non-expiring
-        // token, qits-625), and otherwise a headers helper rather than a plain url, so Claude fetches
-        // a fresh bearer at every connect instead of the launch baking in one that outlives an hour;
-        agent.mcpServer(
-            server.key(),
-            server.headers().isEmpty()
-                ? McpServers.httpMcpWithHeadersHelper(server.url(), QITS_HEADERS_HELPER_COMMAND)
-                : McpServers.httpMcp(server.url(), server.headers()));
+        if (server.headers().isEmpty()) {
+          // No fixed bearer from the host (qits-876): every live container now carries a
+          // non-expiring QITS_TOKEN, so a host with none left to give has no way to authenticate
+          // this server at all, and an unauthenticated entry would only ever answer 401 — a dead
+          // tool, not a missing one. Left out entirely, same as Kimi above.
+          continue;
+        }
+        // it carries the host's fixed headers (a workspace's non-expiring runner-issued token,
+        // qits-625);
+        agent.mcpServer(server.key(), McpServers.httpMcp(server.url(), server.headers()));
         // and it is pre-approved on every surface, skip-permissions or not — the bearer on each call
         // is the session's own credential, so the server can already refuse anything the caller may
         // not do, and a surface that prompts should not stop a session on its first qits tool call.

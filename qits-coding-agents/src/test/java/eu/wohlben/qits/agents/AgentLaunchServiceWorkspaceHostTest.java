@@ -278,8 +278,10 @@ class AgentLaunchServiceWorkspaceHostTest {
 
     @Test
     void theOnlyPlatformServerIsQitsBesideTheBrowser() {
-      // qits-1174: the per-service servers are retired.
-      AgentLaunchService service = service();
+      // qits-1174: the per-service servers are retired. A fixed header from the host is what gets
+      // the qits server rendered at all (qits-876).
+      AgentLaunchService service =
+          serviceWith(new WorkspaceHostMcpServers(Map.of("Authorization", "Bearer t")));
       AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
 
       String script =
@@ -303,7 +305,9 @@ class AgentLaunchServiceWorkspaceHostTest {
 
     @Test
     void aChatCarriesTheScopedServerTheHomeOverlayAndTheHook() {
-      AgentLaunchService service = service();
+      // A fixed header from the host is what gets the qits server rendered at all (qits-876).
+      AgentLaunchService service =
+          serviceWith(new WorkspaceHostMcpServers(Map.of("Authorization", "Bearer t")));
       AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
 
       LaunchSpec spec = service.renderChat(AgentMcpScope.REPOSITORY, AgentSurface.PROJECT_WORK, pinned, AgentType.CLAUDE);
@@ -329,7 +333,9 @@ class AgentLaunchServiceWorkspaceHostTest {
 
     @Test
     void anAutonomousRunMarksEveryUrlServerReadOnly() {
-      AgentLaunchService service = service();
+      // A fixed header from the host is what gets the qits server rendered at all (qits-876).
+      AgentLaunchService service =
+          serviceWith(new WorkspaceHostMcpServers(Map.of("Authorization", "Bearer t")));
       AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
 
       LaunchSpec spec =
@@ -1025,8 +1031,10 @@ class AgentLaunchServiceWorkspaceHostTest {
     @Test
     void aDispatchedRunIsFencedByItsConfigurationRatherThanOnlyByItsShape() {
       // ticket.dispatch is seeded read-only, so the fence renders from the row too, whichever call
-      // site a dispatch goes through.
-      AgentLaunchService service = service();
+      // site a dispatch goes through. A fixed header from the host (qits-625) is what gets the
+      // server rendered at all here, so the url is there to be fenced.
+      AgentLaunchService service =
+          serviceWith(new WorkspaceHostMcpServers(Map.of("Authorization", "Bearer t")));
       AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
 
       configurations = seeded();
@@ -1096,7 +1104,7 @@ class AgentLaunchServiceWorkspaceHostTest {
     }
 
     @Test
-    void claudesQitsEntryCarriesTheHeaderInsteadOfTheHelperAndIsStillPreApproved() {
+    void claudesQitsEntryCarriesTheHostsFixedHeaderAndIsStillPreApproved() {
       String script = claudeScript(runnerHost(BEARER), AgentMcpScope.REPOSITORY);
 
       assertTrue(
@@ -1105,7 +1113,6 @@ class AgentLaunchServiceWorkspaceHostTest {
                   + WorkspaceHostMcpServers.PLATFORM_URL
                   + "\",\"headers\":{\"Authorization\":\"Bearer t\"}}"),
           script);
-      assertFalse(script.contains("headersHelper"), script);
       assertTrue(script.contains("--allowedTools 'mcp__qits__*"), script);
     }
 

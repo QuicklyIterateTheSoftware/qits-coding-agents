@@ -1,7 +1,6 @@
 package eu.wohlben.qits.agents;
 
 import static eu.wohlben.qits.agents.McpServers.httpMcp;
-import static eu.wohlben.qits.agents.McpServers.httpMcpWithHeadersHelper;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -276,34 +275,5 @@ public class CodingAgentFactoryTest {
         cmd.contains(
             "--allowedTools 'mcp__actions__listGlobalActions,mcp__repository__listBranches'"),
         cmd);
-  }
-
-  @Test
-  public void headersHelperRendersExactlyTheInterimCredentialShape() {
-    // qits-630, interim: the central qits platform server's entry runs a command at connect
-    // instead of carrying a static header, since the container's bearer expires within the hour.
-    assertEquals(
-        "{\"type\":\"http\",\"url\":\"http://dev-qits-platform-access-mcp-service:8080/mcp\","
-            + "\"headersHelper\":\"qits mcp-credential\"}",
-        httpMcpWithHeadersHelper("http://dev-qits-platform-access-mcp-service:8080/mcp", "qits mcp-credential")
-            .encode());
-  }
-
-  @Test
-  public void headersHelperRendersInsideTheMcpConfigLikeAnyOtherServer() {
-    LaunchSpec spec =
-        CodingAgentFactory.ofType(AgentType.CLAUDE)
-            .mcpServer(
-                "qits",
-                httpMcpWithHeadersHelper(
-                    "http://dev-qits-platform-access-mcp-service:8080/mcp", "qits mcp-credential"))
-            .start();
-
-    assertTrue(
-        spec.script()
-            .contains(
-                "\"qits\":{\"type\":\"http\",\"url\":\"http://dev-qits-platform-access-mcp-service:8080/mcp\","
-                    + "\"headersHelper\":\"qits mcp-credential\"}"),
-        spec.script());
   }
 }

@@ -113,9 +113,11 @@ literally. Three rules travel with them:
   not attach twice, it displaces the platform's own server in the one key-to-config object, and the
   session looks entirely normal while talking to somebody else's. The retired names stay reserved
   until stored surfaces and older daemons stop using them. `qits` (qits-630) is the central
-  platform-access MCP server — the `qits` CLI served over HTTP — rendered with a `headersHelper`
-  (`McpServers.httpMcpWithHeadersHelper`, interim until qits-684) and pre-approved on Claude
-  (`mcp__qits__*`);
+  platform-access MCP server — the `qits` CLI served over HTTP — rendered with the host's fixed
+  `Authorization` bearer when it has one and pre-approved on Claude (`mcp__qits__*`); a host with no
+  fixed bearer for it (qits-876: every live container now carries a non-expiring `QITS_TOKEN`
+  instead of the retired hourly commissioned-client pair) has nothing to authenticate the server
+  with, so Claude leaves it out of the config entirely rather than rendering a dead, 401-only tool;
 - a **header value is never stored**. The process is spawned with the script as rendered; the command
   keeps that script with each header value replaced (`AgentLaunchMetadata.redact`), the launch record
   names attached servers **by key**, and `AgentExternalMcpServer.toString` redacts;
