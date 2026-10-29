@@ -977,10 +977,10 @@ public final class AgentLaunchService {
     }
     return switch (agentType) {
       case CLAUDE ->
-          // Run the `claude` REPL, NOT the `claude auth login` subcommand. The REPL's first-run
-          // onboarding renders a paste-the-code prompt over the PTY and reads it from stdin, so an
-          // operator can complete sign-in in the terminal. The `auth login` subcommand blocks on a
-          // loopback HTTP callback the host browser can never reach.
+          // Run the `claude` REPL: its first-run onboarding renders a paste-the-code prompt over
+          // the PTY and reads it from stdin, so an operator completes sign-in in the terminal.
+          // `claude auth login` works over a PTY too (2.1.283 prints a manual URL and reads the
+          // pasted code from stdin; qits-system-runner-daemon's SignIns drives exactly that).
           new LaunchSpec("exec claude" + ClaudeCodeAgent.noAttributionFlag(), true, env);
       case KIMI ->
           // Kimi login is a device-code flow that prints the verification URL + user code and
