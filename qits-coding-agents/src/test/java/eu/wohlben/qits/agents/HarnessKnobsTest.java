@@ -84,6 +84,41 @@ class HarnessKnobsTest {
       assertFalse(claude().remoteControl("  ").start().script().contains("--remote-control"));
     }
 
+    /**
+     * Whether a remote session was archived at exit is in the debug log only (qits-1779), so an
+     * interactive Remote Control launch writes one beside the transcript of the session it runs as.
+     */
+    @Test
+    void remoteControlWritesItsDebugLogBesideTheTranscript() {
+      String fresh = "11111111-2222-3333-4444-555555555555";
+      String resumed = "22222222-3333-4444-5555-666666666666";
+      String forked = "33333333-4444-5555-6666-777777777777";
+      String dir = " --debug-file \"${CLAUDE_CONFIG_DIR:-$HOME/.claude}\"/'projects/-workspace/";
+
+      assertTrue(
+          claude().remoteControl("n").sessionId(fresh).start().script()
+              .contains(dir + fresh + ".remote.log'"));
+      assertTrue(
+          claude().remoteControl("n").resume(resumed).start().script()
+              .contains(dir + resumed + ".remote.log'"),
+          "resuming in place runs as the resumed session");
+      assertTrue(
+          claude().remoteControl("n").resume(resumed).fork(forked).start().script()
+              .contains(dir + forked + ".remote.log'"),
+          "a fork runs as its new id");
+    }
+
+    @Test
+    void noDebugLogWithoutRemoteControlOrASessionToNameItBy() {
+      String fresh = "11111111-2222-3333-4444-555555555555";
+
+      assertFalse(claude().sessionId(fresh).start().script().contains("--debug-file"));
+      assertFalse(claude().remoteControl("n").start().script().contains("--debug-file"));
+      assertFalse(
+          claude().remoteControl("n").sessionId(fresh).chat().script().contains("--debug-file"),
+          "a chat enables Remote Control over the control channel, and its shape is unchanged");
+    }
+
     @Test
     void theRenderedNameIsShellQuotedLikeEverythingElse() {
       assertTrue(
