@@ -329,23 +329,29 @@ final class ChatSession {
     sinks.remove(sink);
   }
 
+  /**
+   * Stop this one chat: SIGTERM the group, wait out the grace, then close the transport and
+   * escalate to SIGKILL — {@link #beginTerminate()} and {@link #finishTerminate} back to back, the
+   * order {@link CommandRegistry#terminateAll()} stops every chat in.
+   *
+   * <p>It used to close the transport first and signal after. qits-616 turned the shutdown path
+   * round and left this one, so a single chat stopped on its own — removed, or yielded — could
+   * still read EOF before the TERM and exit cleanly without archiving its claude.ai session
+   * (qits-1779).
+   */
   void terminate() {
-    terminatedManually = true;
-    // Close the transport first (stdin/EOF, plus any protocol-level cancel), so the agent sees the
-    // session end cleanly before we escalate to signals.
-    protocol.close();
-    // A compound script's children are only reachable through the process group, which the launch
-    // recorded to a pid file under setsid; escalate to SIGKILL after the grace period.
-    killGroup("TERM");
-    escalate(System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(graceMillis));
+    beginTerminate();
+    finishTerminate(System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(graceMillis));
   }
 
   /**
-   * The graceful half of a shutdown-wide stop ({@link CommandRegistry#terminateAll()}): mark the
-   * exit as manual and SIGTERM the group, without waiting and <em>before</em> the transport is
-   * closed. The order is the opposite of {@link #terminate()} on purpose: {@code claude
-   * --remote-control} archives its claude.ai session only on SIGTERM, and an EOF on stdin arriving
-   * first can make it exit cleanly without archiving — leaving the remote session dangling.
+   * The graceful half of {@link #terminate()} and of a shutdown-wide stop ({@link
+   * CommandRegistry#terminateAll()}): mark the exit as manual and SIGTERM the group, without
+   * waiting and <em>before</em> the transport is closed. {@code claude --remote-control} archives
+   * its claude.ai session only on SIGTERM, and an EOF on stdin arriving first can make it exit
+   * cleanly without archiving — leaving the remote session dangling. A compound script's children
+   * are only reachable through the process group, which the launch recorded to a pid file under
+   * setsid.
    */
   void beginTerminate() {
     terminatedManually = true;
