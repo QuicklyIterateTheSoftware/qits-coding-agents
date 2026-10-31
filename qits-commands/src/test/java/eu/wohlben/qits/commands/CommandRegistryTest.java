@@ -375,6 +375,70 @@ class CommandRegistryTest {
     assertFalse(registry.isRunning("ta-5"));
   }
 
+  /** Stopping one terminal command by id signals its group with TERM, as the shutdown path does. */
+  @Test
+  void terminateSignalsATerminalSessionWithTerm(@TempDir Path workspace) throws Exception {
+    CommandRegistry registry = new CommandRegistry(workspace, 1_500);
+    CountDownLatch exited = new CountDownLatch(1);
+    AtomicReference<Boolean> manual = new AtomicReference<>();
+    Path marker = workspace.resolve("t-1.termed");
+    Path up = workspace.resolve("t-1.up");
+
+    registry.spawn(
+        "t-1",
+        "trap 'touch " + marker + "; exit 0' TERM; sleep 600 & touch " + up + "; wait",
+        Map.of(),
+        (id, c, m) -> {
+          manual.set(m);
+          exited.countDown();
+        },
+        null);
+    waitUntil(() -> Files.exists(up), 15_000);
+
+    assertTrue(registry.terminate("t-1"));
+
+    assertTrue(exited.await(30, TimeUnit.SECONDS), "the command should have ended");
+    assertTrue(Files.exists(marker), "the session should have received SIGTERM");
+    assertEquals(Boolean.TRUE, manual.get(), "the exit should be reported as manual");
+    assertFalse(registry.isRunning("t-1"));
+  }
+
+  /**
+   * Stopping one chat by id — a removed or yielded session — must signal before it closes stdin,
+   * exactly as {@link CommandRegistry#terminateAll()} does (qits-1779). The script is a chat that
+   * ends on EOF at once and leaves its marker only from the TERM trap, so the old order (EOF first,
+   * TERM after) ends it without a marker, the way {@code claude} ended without archiving.
+   */
+  @Test
+  void terminateSignalsAChatBeforeClosingItsInput(@TempDir Path workspace) throws Exception {
+    CommandRegistry registry = new CommandRegistry(workspace, 1_500);
+    CountDownLatch exited = new CountDownLatch(1);
+    AtomicReference<Boolean> manual = new AtomicReference<>();
+    Path marker = workspace.resolve("t-2.termed");
+    Path up = workspace.resolve("t-2.up");
+
+    registry.spawnChat(
+        "t-2",
+        "trap 'touch " + marker + "; exit 0' TERM; touch " + up + "; "
+            + "while read -r line; do :; done; exit 0",
+        Map.of(),
+        null,
+        (id, c, m) -> {
+          manual.set(m);
+          exited.countDown();
+        },
+        null,
+        null);
+    waitUntil(() -> Files.exists(up), 15_000);
+
+    assertTrue(registry.terminate("t-2"));
+
+    assertTrue(exited.await(30, TimeUnit.SECONDS), "the chat should have ended");
+    assertTrue(Files.exists(marker), "SIGTERM must arrive before stdin closes");
+    assertEquals(Boolean.TRUE, manual.get(), "the exit should be reported as manual");
+    assertFalse(registry.isRunning("t-2"));
+  }
+
   @Test
   void onlyThePersonsTypingMovesTheDraftFlag(@TempDir Path workspace) throws Exception {
     CommandRegistry registry = new CommandRegistry(workspace, 2_000);
