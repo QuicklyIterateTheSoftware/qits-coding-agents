@@ -14,6 +14,10 @@ import java.util.Map;
  * the collected allowlist into a single {@code --allowedTools '…'}; an autonomous run adds {@code
  * --dangerously-skip-permissions}.
  *
+ * <p>An interactive launch with Remote Control on also writes a debug log, {@link
+ * #remoteControlLogPath}, because whether the claude.ai session was archived at exit is recorded
+ * nowhere else (qits-1779); see {@link RemoteControlLog}.
+ *
  * <p>The initial context / prompt is embedded directly as a shell-quoted argument (single-quoting is
  * injection-safe for any content), so a prompt can come from anywhere the caller reads it — a
  * literal, a classpath resource, a request body — without a side file.
@@ -38,6 +42,13 @@ public class ClaudeCodeAgent extends CodingAgent {
     return " --settings " + shellQuote(NO_ATTRIBUTION);
   }
 
+  /**
+   * The interactive REPL. With Remote Control on and a session id the launch knows, it also passes
+   * {@code --debug-file} at {@link #remoteControlLogPath}: the debug log is the only place {@code
+   * claude} records whether it archived its claude.ai session on the way out (qits-1779). Without a
+   * known session id there is nothing to name the file by, and none is written; with Remote Control
+   * off there is nothing to record.
+   */
   @Override
   public LaunchSpec start() {
     StringBuilder command = new StringBuilder("exec claude");
@@ -60,6 +71,29 @@ public class ClaudeCodeAgent extends CodingAgent {
       command.append(" --remote-control ").append(shellQuote(remoteControlName));
     }
     appendFlags(command, true);
+    String remoteSession = remoteControlLogSessionId();
+    if (remoteControlName != null && remoteSession != null) {
+      // A Remote Control session archives its claude.ai listing on SIGTERM, and says whether it did
+      // only in the debug log (qits-1779) — "[code-session] Archive cse_… status=200", "[remote-
+      // bridge] Torn down (archive=200)". The platform runs without a debug file, so a session that
+      // stayed listed on claude.ai left no evidence of why; this gives it one, beside the
+      // transcript, for the daemon to read (and compact) at harness exit through RemoteControlLog.
+      // --debug-file creates the missing project directory itself and leaves the TUI under a PTY
+      // undisturbed (verified against CLI 2.1.283). No --debug <categories>: most lines carry no
+      // category, so it does not shrink the file; the compaction at exit does.
+      //
+      // The config dir is the harness's own CLAUDE_CONFIG_DIR, which only the launch's shell knows,
+      // so it renders as an expansion. The rest is one quoted literal, the remoteControlLogPath the
+      // daemon resolves again: a render is never told its cwd, so it names the one every launch
+      // runs in, the container checkout (AgentTranscriptService.CONTAINER_CWD) — the same
+      // convention the transcript lookups lean on, and the one that keeps both ends in agreement.
+      command
+          .append(" --debug-file \"${CLAUDE_CONFIG_DIR:-$HOME/.claude}\"/")
+          .append(
+              shellQuote(
+                  remoteControlLogPath(AgentTranscriptService.CONTAINER_CWD, remoteSession)
+                      .toString()));
+    }
     // The interactive TUI asks whether to trust a folder it has not seen, before it reads the seed
     // turn. Every agent worktree is a new folder, so every launch would wait on that question. The
     // harness runs in a workspace container, which is the sandbox; CLAUDE_CODE_SANDBOXED tells
@@ -399,6 +433,28 @@ public class ClaudeCodeAgent extends CodingAgent {
   @Override
   public Path subagentsDir(String cwd, String sessionId) {
     return Path.of("projects", escapeCwd(cwd), sessionId, "subagents");
+  }
+
+  /**
+   * Where a Remote Control launch's debug log goes, relative to the config dir: {@code
+   * projects/<escaped-cwd>/<sessionId>.remote.log}, the sibling of {@link #transcriptPath}. The one
+   * definition both ends share — {@link #start()} renders it into {@code --debug-file}, and {@link
+   * RemoteControlLog#resolve} finds it again at harness exit (qits-1779).
+   */
+  public static Path remoteControlLogPath(String cwd, String sessionId) {
+    return Path.of("projects", escapeCwd(cwd), sessionId + ".remote.log");
+  }
+
+  /**
+   * The session an interactive launch runs as, which names its {@link #remoteControlLogPath}: the
+   * pinned id on a fresh launch, the resumed one when resuming in place, the new id on a fork. Null
+   * when the launch lets the harness pick, and then there is nothing to name the file by.
+   */
+  private String remoteControlLogSessionId() {
+    if (resumeSessionId != null && !forkRequested) {
+      return resumeSessionId;
+    }
+    return sessionId;
   }
 
   private static String escapeCwd(String cwd) {
