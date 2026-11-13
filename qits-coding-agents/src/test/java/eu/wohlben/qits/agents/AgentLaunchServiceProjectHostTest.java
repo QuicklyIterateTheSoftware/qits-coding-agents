@@ -781,7 +781,7 @@ class AgentLaunchServiceProjectHostTest {
       assertThrows(InvalidCommandRequestException.class, () -> AgentSurface.of("project.epic"));
       assertThrows(InvalidCommandRequestException.class, () -> AgentSurface.of(""));
       assertEquals(Optional.empty(), AgentSurface.parse(null));
-      assertEquals(8, AgentSurface.KNOWN.size());
+      assertEquals(9, AgentSurface.KNOWN.size());
     }
 
     @Test
@@ -819,6 +819,29 @@ class AgentLaunchServiceProjectHostTest {
                   AgentType.CLAUDE)
               .script()
               .contains("--remote-control '" + AgentRemoteControl.DELIVERY_DESK_NAME + "'"));
+    }
+
+    @Test
+    void theUiBuilderNamedAgentIsKnownAndNamedAsItselfNotTheFrontDesk() {
+      // qits-2154: a second kept session in the desk's container, never on project.work's surface
+      // (FrontDeskKeeper holds the desk's launch while any live project.work session exists), so it
+      // gets a surface and a name of its own rather than borrowing the front desk's.
+      assertEquals(AgentSurface.PROJECT_UI_BUILDER, AgentSurface.of("project.ui-builder"));
+      assertTrue(AgentSurface.KNOWN.contains(AgentSurface.PROJECT_UI_BUILDER));
+
+      AgentLaunchService service = service();
+      AgentLaunchService.PinnedSession pinned = service.pinSession(null, false, AgentType.CLAUDE);
+
+      assertTrue(
+          service
+              .renderInteractive(
+                  AgentMcpScope.PROJECT,
+                  AgentSurface.PROJECT_UI_BUILDER,
+                  null,
+                  pinned,
+                  AgentType.CLAUDE)
+              .script()
+              .contains("--remote-control '" + AgentRemoteControl.UI_BUILDER_NAME + "'"));
     }
 
     @Test

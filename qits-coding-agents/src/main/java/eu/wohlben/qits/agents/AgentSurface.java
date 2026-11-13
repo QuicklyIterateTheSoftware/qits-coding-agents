@@ -12,7 +12,7 @@ import java.util.Optional;
  * there was nowhere to put a prompt. {@link #PROJECT_WORK} is what both of the enum's values folded
  * into once the estate turned over onto the one merged front desk.
  *
- * <p>The eight the platform has today:
+ * <p>The nine the platform has today:
  *
  * <ul>
  *   <li>{@link #PROJECT_WORK} — the one project desk's surface, at {@code :project/work}: the merged
@@ -26,6 +26,8 @@ import java.util.Optional;
  *   <li>{@link #EPIC_AUTONOMOUS} — the composed task-prompt run, which no human presses a button
  *       for.
  *   <li>{@link #TICKET_DISPATCH} — the agent a ticket dispatch starts in a freshly cut workspace.
+ *   <li>{@link #PROJECT_UI_BUILDER} — the named agent {@code ui-builder}, a second kept session in
+ *       the desk's container, beside the front desk rather than on its surface.
  * </ul>
  *
  * <p><b>The four workspace-daemon surfaces send byte-identical launch requests today.</b> {@link
@@ -80,8 +82,17 @@ public record AgentSurface(String key) {
   public static final AgentSurface TICKET_DISPATCH = new AgentSurface("ticket.dispatch");
 
   /**
+   * A project's named agent {@code ui-builder} (qits-2154): a kept session in the desk's container,
+   * tied to no entity, beside the front desk but never on the desk's {@link #PROJECT_WORK} surface,
+   * because {@code FrontDeskKeeper} holds the desk's launch while any live {@code project.work}
+   * session exists.
+   */
+  public static final AgentSurface PROJECT_UI_BUILDER = new AgentSurface("project.ui-builder");
+
+  /**
    * The vocabulary, in the order the editor lists it: the one project desk, the four a human opens
-   * in a workspace container, the two composed runs, then the delivery desk.
+   * in a workspace container, the two composed runs, the delivery desk, then the ui-builder named
+   * agent.
    *
    * <p>The same order and the same keys as {@code AgentSurfaceDefaults.SURFACES} in
    * qits-projects-service. The two lists are copies rather than a shared type — that service depends
@@ -98,7 +109,8 @@ public record AgentSurface(String key) {
           WORKSPACE_AGENT,
           EPIC_AUTONOMOUS,
           TICKET_DISPATCH,
-          PROJECT_DELIVERY);
+          PROJECT_DELIVERY,
+          PROJECT_UI_BUILDER);
 
   public AgentSurface {
     key = key == null ? null : key.trim().toLowerCase(Locale.ROOT);

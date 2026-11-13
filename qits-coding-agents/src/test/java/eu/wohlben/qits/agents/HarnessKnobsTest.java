@@ -259,6 +259,20 @@ class HarnessKnobsTest {
     }
 
     @Test
+    void theUiBuilderNamedAgentIsTheUiBuilderNotItsSurfaceKey() {
+      // qits-2154: a second kept session in the desk's container, never the desk itself and never
+      // on its project.work surface, so it gets a name of its own rather than FRONT_DESK_NAME or
+      // the generic "qits <surface> <branch>" shape.
+      assertEquals(
+          "🎨 qits ui-builder",
+          AgentRemoteControl.sessionName(
+              null, EntityFacts.NONE, AgentSurface.PROJECT_UI_BUILDER, "main"));
+      assertEquals(
+          AgentRemoteControl.UI_BUILDER_NAME,
+          AgentRemoteControl.sessionName(null, null, "project.ui-builder", null));
+    }
+
+    @Test
     void aKnownEntityReadsSquareIdAndTitle() {
       assertEquals(
           "\uD83D\uDFE6 qits-555 Comments on every work entity",

@@ -40,8 +40,10 @@ import java.util.Optional;
  * the phases apart once the entity has moved on.
  *
  * <p>The project desk, which runs for no entity, is named {@link #FRONT_DESK_NAME} rather than by
- * its internal surface key, and the delivery desk beside it {@link #DELIVERY_DESK_NAME}; every other entity-less session keeps the {@code qits <surface>
- * <branch>} shape, because an ad-hoc workspace or an editor has nothing better to be called.
+ * its internal surface key, the delivery desk beside it {@link #DELIVERY_DESK_NAME}, and the
+ * ui-builder named agent beside both {@link #UI_BUILDER_NAME} (qits-2154); every other entity-less
+ * session keeps the {@code qits <surface> <branch>} shape, because an ad-hoc workspace or an editor
+ * has nothing better to be called.
  *
  * <p><b>The name is typed, not only passed.</b> A live rename of an interactive session is {@code
  * /rename <name>} followed by Enter, written into its PTY, so a newline inside a name would submit
@@ -140,6 +142,16 @@ public final class AgentRemoteControl {
   public static final String DELIVERY_DESK_NAME = "\uD83D\uDE9A qits delivery desk";
 
   /**
+   * The ui-builder named agent's name (qits-2154): {@link AgentSurface#PROJECT_UI_BUILDER} runs for
+   * no entity either — it is a second kept session in the desk's container, beside the front desk
+   * rather than on its surface — so it gets a name of its own, a palette in the slot the status
+   * square takes, rather than {@link #FRONT_DESK_NAME} (which it never shares a surface with) or the
+   * generic {@code qits project.ui-builder <branch>} shape every other entity-less surface falls
+   * back to.
+   */
+  public static final String UI_BUILDER_NAME = "\uD83C\uDFA8 qits ui-builder";
+
+  /**
    * How many code points of a title a name keeps. Long enough for every title a person writes as a
    * title; short enough that a pasted paragraph does not become a session name. A cut title ends in
    * {@code …}, which counts towards the limit.
@@ -164,7 +176,9 @@ public final class AgentRemoteControl {
    * </ul>
    *
    * <p>Without an entity, {@link AgentSurface#PROJECT_WORK} is {@link #FRONT_DESK_NAME}, {@link
-   * AgentSurface#PROJECT_DELIVERY} is {@link #DELIVERY_DESK_NAME}, and every other surface keeps the old shape: {@code qits} leads because that list is not this platform's
+   * AgentSurface#PROJECT_DELIVERY} is {@link #DELIVERY_DESK_NAME}, {@link
+   * AgentSurface#PROJECT_UI_BUILDER} is {@link #UI_BUILDER_NAME} (qits-2154), and every other
+   * surface keeps the old shape: {@code qits} leads because that list is not this platform's
    * — it holds whatever else the operator's account is running — and the surface key and the branch
    * are the two facts that tell one platform session from another; a container that does not know
    * its branch is named by its surface alone. A blocked flag still puts {@link #BLOCKED_MARKER} in
@@ -218,6 +232,9 @@ public final class AgentRemoteControl {
     }
     if (AgentSurface.PROJECT_DELIVERY.key().equals(surfaceKey)) {
       return DELIVERY_DESK_NAME;
+    }
+    if (AgentSurface.PROJECT_UI_BUILDER.key().equals(surfaceKey)) {
+      return UI_BUILDER_NAME;
     }
     String key = surfaceKey == null || surfaceKey.isBlank() ? "session" : surfaceKey;
     return branch == null || branch.isBlank() ? "qits " + key : "qits " + key + " " + branch;
