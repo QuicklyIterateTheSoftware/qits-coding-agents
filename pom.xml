@@ -49,7 +49,7 @@
          resolved. -->
     <groupId>eu.wohlben.qits</groupId>
     <artifactId>qits-agents</artifactId>
-    <version>2026.1031.164420</version>
+    <version>2026.1113.30637</version>
     <packaging>pom</packaging>
     <name>qits-agents</name>
 
