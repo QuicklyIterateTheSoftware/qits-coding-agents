@@ -12,7 +12,7 @@ import java.util.Optional;
  * there was nowhere to put a prompt. {@link #PROJECT_WORK} is what both of the enum's values folded
  * into once the estate turned over onto the one merged front desk.
  *
- * <p>The nine the platform has today:
+ * <p>The ten the platform has today:
  *
  * <ul>
  *   <li>{@link #PROJECT_WORK} — the one project desk's surface, at {@code :project/work}: the merged
@@ -28,6 +28,9 @@ import java.util.Optional;
  *   <li>{@link #TICKET_DISPATCH} — the agent a ticket dispatch starts in a freshly cut workspace.
  *   <li>{@link #PROJECT_UI_BUILDER} — the named agent {@code ui-builder}, a second kept session in
  *       the desk's container, beside the front desk rather than on its surface.
+ *   <li>{@link #PROJECT_AGENT} — the main session of a project's long-running agent, launched by
+ *       qits-agents-daemon as an interactive, {@code REPOSITORY}-scoped session in the agent's own
+ *       wrapper checkout.
  * </ul>
  *
  * <p><b>The four workspace-daemon surfaces send byte-identical launch requests today.</b> {@link
@@ -90,9 +93,15 @@ public record AgentSurface(String key) {
   public static final AgentSurface PROJECT_UI_BUILDER = new AgentSurface("project.ui-builder");
 
   /**
+   * The main session of a project's long-running agent (qits-2519): launched by qits-agents-daemon
+   * as an interactive, {@code REPOSITORY}-scoped session in the agent's own wrapper checkout.
+   */
+  public static final AgentSurface PROJECT_AGENT = new AgentSurface("project.agent");
+
+  /**
    * The vocabulary, in the order the editor lists it: the one project desk, the four a human opens
-   * in a workspace container, the two composed runs, the delivery desk, then the ui-builder named
-   * agent.
+   * in a workspace container, the two composed runs, the delivery desk, the ui-builder named agent,
+   * then the project agent's main session.
    *
    * <p>The same order and the same keys as {@code AgentSurfaceDefaults.SURFACES} in
    * qits-projects-service. The two lists are copies rather than a shared type — that service depends
@@ -110,7 +119,8 @@ public record AgentSurface(String key) {
           EPIC_AUTONOMOUS,
           TICKET_DISPATCH,
           PROJECT_DELIVERY,
-          PROJECT_UI_BUILDER);
+          PROJECT_UI_BUILDER,
+          PROJECT_AGENT);
 
   public AgentSurface {
     key = key == null ? null : key.trim().toLowerCase(Locale.ROOT);

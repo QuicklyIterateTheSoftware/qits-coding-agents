@@ -781,7 +781,36 @@ class AgentLaunchServiceProjectHostTest {
       assertThrows(InvalidCommandRequestException.class, () -> AgentSurface.of("project.epic"));
       assertThrows(InvalidCommandRequestException.class, () -> AgentSurface.of(""));
       assertEquals(Optional.empty(), AgentSurface.parse(null));
-      assertEquals(9, AgentSurface.KNOWN.size());
+      assertEquals(10, AgentSurface.KNOWN.size());
+    }
+
+    @Test
+    void theKnownVocabularyIsExactlyTheTenInOrder() {
+      // The editor lists KNOWN in this order: the one project desk, the four a human opens in a
+      // workspace container, the two composed runs, the delivery desk, the ui-builder named agent,
+      // then the project agent's main session (qits-2558).
+      assertEquals(
+          List.of(
+              AgentSurface.PROJECT_WORK,
+              AgentSurface.EPIC_CHAT,
+              AgentSurface.EPIC_AGENT,
+              AgentSurface.WORKSPACE_CHAT,
+              AgentSurface.WORKSPACE_AGENT,
+              AgentSurface.EPIC_AUTONOMOUS,
+              AgentSurface.TICKET_DISPATCH,
+              AgentSurface.PROJECT_DELIVERY,
+              AgentSurface.PROJECT_UI_BUILDER,
+              AgentSurface.PROJECT_AGENT),
+          AgentSurface.KNOWN);
+    }
+
+    @Test
+    void theProjectAgentSurfaceIsKnownAndResolves() {
+      // qits-2519: the main session of a project's long-running agent, launched by
+      // qits-agents-daemon as an interactive, REPOSITORY-scoped session in the agent's own wrapper
+      // checkout.
+      assertEquals(AgentSurface.PROJECT_AGENT, AgentSurface.of("project.agent"));
+      assertTrue(AgentSurface.KNOWN.contains(AgentSurface.PROJECT_AGENT));
     }
 
     @Test
