@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 /** Pure-renderer tests for the coding-agent builder — no CDI, just the shell it produces. */
@@ -275,5 +276,127 @@ public class CodingAgentFactoryTest {
         cmd.contains(
             "--allowedTools 'mcp__actions__listGlobalActions,mcp__repository__listBranches'"),
         cmd);
+  }
+
+  // --- the qits-egress forward proxy (qits-2658) ---------------------------------------------------
+
+  @Test
+  public void egressProxyEnvRequiresBothNonBlankHalves() {
+    assertTrue(ClaudeCodeAgent.egressProxyEnv(Map.of()).isEmpty());
+    assertTrue(ClaudeCodeAgent.egressProxyEnv(Map.of("QITS_EGRESS_PROXY", "p")).isEmpty());
+    assertTrue(ClaudeCodeAgent.egressProxyEnv(Map.of("QITS_TOKEN", "t")).isEmpty());
+    assertTrue(
+        ClaudeCodeAgent.egressProxyEnv(Map.of("QITS_EGRESS_PROXY", " ", "QITS_TOKEN", "t"))
+            .isEmpty());
+    assertTrue(
+        ClaudeCodeAgent.egressProxyEnv(Map.of("QITS_EGRESS_PROXY", "p", "QITS_TOKEN", " "))
+            .isEmpty());
+
+    Map<String, String> env =
+        ClaudeCodeAgent.egressProxyEnv(Map.of("QITS_EGRESS_PROXY", "p", "QITS_TOKEN", "t"));
+    assertEquals(
+        Map.of(
+            "HTTPS_PROXY", "http://agent:t@p",
+            "https_proxy", "http://agent:t@p",
+            "HTTP_PROXY", "http://agent:t@p",
+            "http_proxy", "http://agent:t@p"),
+        env);
+  }
+
+  @Test
+  public void urlEncodeEscapesEverythingButTheUnreservedCharacters() {
+    assertEquals("abcXYZ019-_.~", ClaudeCodeAgent.urlEncode("abcXYZ019-_.~"));
+    // A token can hold base64 ('+', '/', '='), a literal '@' or ':', or a space — none of which are
+    // safe, unescaped, inside a URL's userinfo component.
+    assertEquals("a%2Bb%2Fc%3Dd%40e%3Af%20g", ClaudeCodeAgent.urlEncode("a+b/c=d@e:f g"));
+  }
+
+  @Test
+  public void startRunAndChatAllRouteThroughTheEgressProxyWhenBothHalvesArePresent() {
+    String url = "http://agent:a%2Bb@127.0.0.1:3128";
+
+    LaunchSpec started =
+        CodingAgentFactory.ofType(AgentType.CLAUDE)
+            .environment("QITS_EGRESS_PROXY", "127.0.0.1:3128")
+            .environment("QITS_TOKEN", "a+b")
+            .start();
+    LaunchSpec ran =
+        CodingAgentFactory.ofType(AgentType.CLAUDE)
+            .environment("QITS_EGRESS_PROXY", "127.0.0.1:3128")
+            .environment("QITS_TOKEN", "a+b")
+            .run("hi");
+    LaunchSpec chatted =
+        CodingAgentFactory.ofType(AgentType.CLAUDE)
+            .environment("QITS_EGRESS_PROXY", "127.0.0.1:3128")
+            .environment("QITS_TOKEN", "a+b")
+            .chat();
+
+    for (LaunchSpec spec : List.of(started, ran, chatted)) {
+      assertEquals(url, spec.environment().get("HTTPS_PROXY"), spec.script());
+      assertEquals(url, spec.environment().get("https_proxy"), spec.script());
+      assertEquals(url, spec.environment().get("HTTP_PROXY"), spec.script());
+      assertEquals(url, spec.environment().get("http_proxy"), spec.script());
+    }
+  }
+
+  @Test
+  public void theProxyUrlCarriesWhicheverTokenWasSetLast() {
+    // Mirrors the launch-time guarantee (AgentLaunchServiceProjectHostTest's EnvironmentOverlay
+    // suite): a value applied to the environment overlay after an earlier one wins, so a per-agent
+    // token laid over a container's own replaces it here too, not just in the MCP bearer.
+    LaunchSpec spec =
+        CodingAgentFactory.ofType(AgentType.CLAUDE)
+            .environment("QITS_EGRESS_PROXY", "proxy:1")
+            .environment("QITS_TOKEN", "containerToken")
+            .environment("QITS_TOKEN", "overlaidToken")
+            .start();
+
+    assertEquals("http://agent:overlaidToken@proxy:1", spec.environment().get("HTTPS_PROXY"));
+  }
+
+  @Test
+  public void withoutTheEgressProxyNothingChanges() {
+    // No QITS_EGRESS_PROXY at all: a launch overlaid with only a token (every launch before
+    // qits-2658) gets no proxy env vars and no settings key — neither half of either feature.
+    LaunchSpec tokenOnly =
+        CodingAgentFactory.ofType(AgentType.CLAUDE).environment("QITS_TOKEN", "t").start();
+    assertFalse(tokenOnly.environment().containsKey("HTTPS_PROXY"));
+    assertFalse(tokenOnly.script().contains("skipWebFetchPreflight"), tokenOnly.script());
+
+    // A proxy with no token to act as: still no proxy env vars (nothing to authenticate it with),
+    // but skipWebFetchPreflight depends only on QITS_EGRESS_PROXY, so it is still added.
+    LaunchSpec proxyOnly =
+        CodingAgentFactory.ofType(AgentType.CLAUDE)
+            .environment("QITS_EGRESS_PROXY", "p")
+            .run("hi");
+    assertFalse(proxyOnly.environment().containsKey("HTTP_PROXY"));
+    assertTrue(proxyOnly.script().contains("skipWebFetchPreflight"), proxyOnly.script());
+
+    assertFalse(
+        CodingAgentFactory.ofType(AgentType.CLAUDE)
+            .environment("QITS_TOKEN", "t")
+            .chat()
+            .script()
+            .contains("skipWebFetchPreflight"));
+  }
+
+  @Test
+  public void settingsCarrySkipWebFetchPreflightOnlyWithTheEgressProxySet() {
+    String withProxy =
+        CodingAgentFactory.ofType(AgentType.CLAUDE)
+            .environment("QITS_EGRESS_PROXY", "proxy:3128")
+            .run("hi")
+            .script();
+    assertTrue(withProxy.contains("\"skipWebFetchPreflight\":true"), withProxy);
+
+    String blankProxy =
+        CodingAgentFactory.ofType(AgentType.CLAUDE)
+            .environment("QITS_EGRESS_PROXY", " ")
+            .run("hi")
+            .script();
+    assertFalse(blankProxy.contains("skipWebFetchPreflight"), blankProxy);
+
+    String withoutProxy = CodingAgentFactory.ofType(AgentType.CLAUDE).run("hi").script();
+    assertFalse(withoutProxy.contains("skipWebFetchPreflight"), withoutProxy);
   }
 }

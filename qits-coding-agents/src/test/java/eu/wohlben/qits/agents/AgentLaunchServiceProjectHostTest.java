@@ -675,6 +675,78 @@ class AgentLaunchServiceProjectHostTest {
     }
   }
 
+  // --- the qits-egress Claude login placeholder (qits-2658) ---------------------------------------
+
+  @Nested
+  class ClaudeLoginHeldByEgress {
+
+    private void writeCredentials(String accessToken) throws Exception {
+      Path home = workspaceRoot.resolve("claude-home");
+      Path credentials = home.resolve(".claude/.credentials.json");
+      Files.createDirectories(credentials.getParent());
+      Files.writeString(
+          credentials,
+          new JsonObject()
+              .put(
+                  "claudeAiOauth",
+                  new JsonObject().put("accessToken", accessToken).put("refreshToken", "x"))
+              .encode());
+      claudeMount = home.toString();
+    }
+
+    @Test
+    void refusesWhenTheCredentialsFileHoldsThePlaceholder() throws Exception {
+      writeCredentials("qits-egress-placeholder");
+
+      ClaudeLoginHeldByEgressException refused =
+          assertThrows(
+              ClaudeLoginHeldByEgressException.class,
+              () -> service().launchLogin(AgentType.CLAUDE));
+      assertEquals(
+          "the Claude login is held by qits-egress; sign in with 'qits targets sign-in'",
+          refused.getMessage());
+    }
+
+    @Test
+    void proceedsWithARealLogin() throws Exception {
+      writeCredentials("a-real-oauth-token");
+
+      assertEquals(
+          "exec claude" + ClaudeCodeAgent.noAttributionFlag(),
+          service().launchLogin(AgentType.CLAUDE).executeScript());
+    }
+
+    @Test
+    void proceedsWithNoFileAtAll() {
+      claudeMount = workspaceRoot.resolve("claude-home-never-provisioned").toString();
+
+      assertEquals(
+          "exec claude" + ClaudeCodeAgent.noAttributionFlag(),
+          service().launchLogin(AgentType.CLAUDE).executeScript());
+    }
+
+    @Test
+    void kimiIsNeverRefused() throws Exception {
+      writeCredentials("qits-egress-placeholder");
+
+      assertEquals("exec kimi login", service().launchLogin(AgentType.KIMI).executeScript());
+    }
+
+    @Test
+    void thePureCheckReadsOnlyTheAccessToken() {
+      assertTrue(
+          AgentLaunchService.isEgressPlaceholderCredentials(
+              "{\"claudeAiOauth\":{\"accessToken\":\"qits-egress-placeholder\"}}"));
+      assertFalse(
+          AgentLaunchService.isEgressPlaceholderCredentials(
+              "{\"claudeAiOauth\":{\"accessToken\":\"real\"}}"));
+      assertFalse(AgentLaunchService.isEgressPlaceholderCredentials(null));
+      assertFalse(AgentLaunchService.isEgressPlaceholderCredentials(""));
+      assertFalse(AgentLaunchService.isEgressPlaceholderCredentials("not json"));
+      assertFalse(AgentLaunchService.isEgressPlaceholderCredentials("{}"));
+    }
+  }
+
   // --- the surfaces -----------------------------------------------------------------------------
 
   @Nested
@@ -2046,6 +2118,43 @@ class AgentLaunchServiceProjectHostTest {
     void aVariableNameThatIsNotAnIdentifierIsRefused() {
       assertThrows(
           InvalidCommandRequestException.class, () -> delivery(Map.of("X; rm -rf /", "")));
+    }
+
+    // --- the qits-egress forward proxy (qits-2658) ------------------------------------------------
+
+    @Test
+    void theEgressProxyUsesTheOverlaidTokenAndIsUrlEncoded() {
+      service()
+          .launch(delivery(Map.of("QITS_TOKEN", "a+b/c", "QITS_EGRESS_PROXY", "127.0.0.1:3128")));
+
+      Commands.Launch launch = commands.last();
+      String url = "http://agent:a%2Bb%2Fc@127.0.0.1:3128";
+      assertEquals(url, launch.environment().get("HTTPS_PROXY"));
+      assertEquals(url, launch.environment().get("https_proxy"));
+      assertEquals(url, launch.environment().get("HTTP_PROXY"));
+      assertEquals(url, launch.environment().get("http_proxy"));
+    }
+
+    @Test
+    void withoutTheEgressProxyVariableNothingIsAdded() {
+      // A per-agent QITS_TOKEN overlay alone — the common shape before qits-2658, and still the
+      // whole of it on a container with the proxy switched off — carries no proxy and no settings
+      // key.
+      service().launch(delivery(Map.of("QITS_TOKEN", "t2")));
+
+      Commands.Launch launch = commands.last();
+      assertFalse(launch.environment().containsKey("HTTPS_PROXY"));
+      assertFalse(launch.script().contains("skipWebFetchPreflight"), launch.script());
+    }
+
+    @Test
+    void theEgressProxySettingSkipsTheWebFetchPreflight() {
+      service()
+          .launch(delivery(Map.of("QITS_TOKEN", "t2", "QITS_EGRESS_PROXY", "127.0.0.1:3128")));
+
+      assertTrue(
+          commands.last().script().contains("\"skipWebFetchPreflight\":true"),
+          commands.last().script());
     }
   }
 
