@@ -11,6 +11,9 @@ import eu.wohlben.qits.commands.Command;
 import eu.wohlben.qits.commands.CommandExitListener;
 import eu.wohlben.qits.commands.InvalidCommandRequestException;
 import eu.wohlben.qits.commands.StreamJsonChatProtocol;
+import io.vertx.core.json.JsonObject;
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -920,8 +923,23 @@ public final class AgentLaunchService {
    * harness was signed out, which made every one of them able to answer with a session nobody asked
    * for. They refuse now (see {@link #requireSignedIn}) and this stays exactly where it was, opened
    * deliberately by a caller that tells the user what it is.
+   *
+   * <p><b>Claude only, one more refusal first.</b> Once qits-egress holds this node's real login, the
+   * shared volume's {@code .credentials.json} carries its placeholder rather than a real one (see the
+   * dossier page "Claude credential in qits-egress"). A person completing the REPL onboarding against
+   * a volume already in that state would type a real OAuth code back into it — overwriting the
+   * placeholder with a real credential, which breaks the swap qits-egress's injection depends on and
+   * the refresh-token rotation it owns instead. So this checks the file itself, the same one {@code
+   * claude} reads and writes, and refuses before rendering anything. Kimi carries no such hand-over
+   * and is unchanged.
+   *
+   * @throws ClaudeLoginHeldByEgressException when the credential volume already holds qits-egress's
+   *     placeholder for Claude
    */
   public Command launchLogin(AgentType agentType) {
+    if (agentType == AgentType.CLAUDE && claudeLoginHeldByEgress(claudeMount)) {
+      throw new ClaudeLoginHeldByEgressException();
+    }
     LaunchSpec spec = renderLogin(agentType);
     String name =
         switch (agentType) {
@@ -940,6 +958,52 @@ public final class AgentLaunchService {
         null,
         null,
         AgentLaunchMetadata.of(agentType.name(), null));
+  }
+
+  /**
+   * The {@code claudeAiOauth.accessToken} qits-egress writes to the shared credential volume, in
+   * place of a real one, once it holds this node's real Claude login (see the dossier page "Claude
+   * credential in qits-egress").
+   */
+  static final String CLAUDE_EGRESS_PLACEHOLDER_TOKEN = "qits-egress-placeholder";
+
+  /**
+   * Whether {@code claudeAiOauth.accessToken} in {@code credentialsJson} — the raw contents of
+   * {@code $CLAUDE_CONFIG_DIR/.credentials.json} — is qits-egress's placeholder rather than a real
+   * login. Answers false for {@code null}, blank or unparseable content, or one with no such field:
+   * the broader not-signed-in gate is {@link #requireSignedIn}, and this one additional refusal must
+   * not itself misfire over a read race or a shape it does not recognise.
+   */
+  static boolean isEgressPlaceholderCredentials(String credentialsJson) {
+    if (credentialsJson == null || credentialsJson.isBlank()) {
+      return false;
+    }
+    try {
+      JsonObject oauth = new JsonObject(credentialsJson).getJsonObject("claudeAiOauth");
+      return oauth != null
+          && CLAUDE_EGRESS_PLACEHOLDER_TOKEN.equals(oauth.getString("accessToken"));
+    } catch (RuntimeException malformed) {
+      return false;
+    }
+  }
+
+  /**
+   * {@link #isEgressPlaceholderCredentials(String)} read off the shared credential volume's own
+   * file — {@code <claudeMount>/.claude/.credentials.json}, the same one {@code claude} itself reads
+   * and writes. False for a blank mount or a missing/unreadable file: nothing to refuse a login
+   * over.
+   */
+  private static boolean claudeLoginHeldByEgress(String claudeMount) {
+    if (claudeMount == null || claudeMount.isBlank()) {
+      return false;
+    }
+    Path credentials =
+        AgentTranscripts.configDir(claudeMount, AgentType.CLAUDE).resolve(".credentials.json");
+    try {
+      return isEgressPlaceholderCredentials(Files.readString(credentials));
+    } catch (IOException unreadable) {
+      return false;
+    }
   }
 
   /**
@@ -1482,6 +1546,21 @@ public final class AgentLaunchService {
       String entityKey) {
     AgentSurfaceConfiguration configuration = configurationFor(surface);
     CodingAgent agent = CodingAgentFactory.ofType(agentType);
+    // The launch's own overlay, visible to the agent before it is asked to render anything from it.
+    // ClaudeCodeAgent's qits-egress proxy injection (qits-2658) reads QITS_EGRESS_PROXY and
+    // QITS_TOKEN off its own `environment` field while it renders — a value this overlay applied
+    // only through overlaid() below, after start()/chat() already ran, would never be seen there.
+    // overlaid() still applies the very same map again, last, so every existing guarantee of the
+    // overlay (it wins over what the library itself sets, an empty value removes a variable) is
+    // exactly what it was; this is additional visibility for the harness, not a different rule.
+    if (environment != null) {
+      environment.forEach(
+          (key, value) -> {
+            if (value != null && !value.isEmpty()) {
+              agent.environment(key, value);
+            }
+          });
+    }
     Attached resolved = attachedServers(scope, configuration, unattended, environment);
     List<ScopedMcp> attached = resolved.servers();
     for (ScopedMcp server : attached) {

@@ -98,7 +98,7 @@ public class ClaudeCodeAgent extends CodingAgent {
     // turn. Every agent worktree is a new folder, so every launch would wait on that question. The
     // harness runs in a workspace container, which is the sandbox; CLAUDE_CODE_SANDBOXED tells
     // Claude Code so, and it then trusts the folder (verified against CLI 2.1.296).
-    Map<String, String> env = new HashMap<>(environment);
+    Map<String, String> env = new HashMap<>(withEgressProxy());
     env.put(SANDBOXED, "1");
     return new LaunchSpec(command.toString(), true, env);
   }
@@ -107,7 +107,7 @@ public class ClaudeCodeAgent extends CodingAgent {
   public LaunchSpec run(String prompt) {
     StringBuilder command = new StringBuilder("claude -p ").append(shellQuote(prompt));
     appendFlags(command, false);
-    return new LaunchSpec(command.toString(), false, environment);
+    return new LaunchSpec(command.toString(), false, withEgressProxy());
   }
 
   @Override
@@ -123,7 +123,95 @@ public class ClaudeCodeAgent extends CodingAgent {
             "exec claude --print --input-format stream-json --output-format stream-json"
                 + " --include-hook-events --verbose");
     appendFlags(command, false);
-    return new LaunchSpec(command.toString(), false, environment);
+    return new LaunchSpec(command.toString(), false, withEgressProxy());
+  }
+
+  /**
+   * The overlay key naming this container's qits-egress forward proxy — {@code host:port} of the
+   * local listener {@code qits-trust-init}'s {@code 50-egress.sh} hook starts, present once a
+   * container has been cut over and absent or blank on one with the proxy switched off ({@code
+   * QITS_EGRESS=off}). See the dossier page "Reaching the proxy from every agent container".
+   */
+  static final String QITS_EGRESS_PROXY = "QITS_EGRESS_PROXY";
+
+  /**
+   * The overlay key naming the bearer this launch's shell itself acts as. Not this class's own
+   * concern otherwise — {@link AgentLaunchService} is what turns it into the platform MCP servers'
+   * Authorization header — but the egress proxy wants the very same credential: the agent's shell
+   * and its tools should act as one principal, audited as one principal.
+   */
+  static final String QITS_TOKEN = "QITS_TOKEN";
+
+  /**
+   * The proxy env vars that route this session's outbound HTTP through qits-egress's forward proxy,
+   * authenticated as the bearer this launch's shell itself carries ({@code
+   * http://agent:<url-encoded QITS_TOKEN>@<QITS_EGRESS_PROXY>}) — so a Bash tool's children inherit
+   * the same proxy, and qits-egress's audit names the session's own principal rather than a fixed
+   * one. Empty when either half of the pair is missing from {@code environment} — a container with
+   * the proxy off, or a launch with no token to act as at all — which is every launch before this
+   * epic and the whole of {@link #QITS_EGRESS_PROXY}'s "without the proxy nothing changes"
+   * guarantee.
+   *
+   * <p>Reads {@code environment} rather than any ambient process environment, on purpose: this is a
+   * pure renderer, and the caller — {@link AgentLaunchService#render}, which applies the launch's own
+   * overlay to the agent before asking it to render anything — is what makes sure the two keys this
+   * reads are the <em>final</em> ones the process will get, including a per-agent {@code QITS_TOKEN}
+   * applied outside this class.
+   */
+  static Map<String, String> egressProxyEnv(Map<String, String> environment) {
+    String proxy = environment == null ? null : environment.get(QITS_EGRESS_PROXY);
+    String token = environment == null ? null : environment.get(QITS_TOKEN);
+    if (proxy == null || proxy.isBlank() || token == null || token.isBlank()) {
+      return Map.of();
+    }
+    String url = "http://agent:" + urlEncode(token.trim()) + "@" + proxy.trim();
+    return Map.of(
+        "HTTPS_PROXY", url,
+        "https_proxy", url,
+        "HTTP_PROXY", url,
+        "http_proxy", url);
+  }
+
+  /**
+   * {@link #environment} with {@link #egressProxyEnv} layered on top, or {@link #environment}
+   * itself, unchanged, when there is nothing to add — one call site for every launch shape, and the
+   * identity return is what keeps "without the proxy nothing changes" true at the reference level
+   * too, not only at the value level.
+   */
+  private Map<String, String> withEgressProxy() {
+    Map<String, String> proxy = egressProxyEnv(environment);
+    if (proxy.isEmpty()) {
+      return environment;
+    }
+    Map<String, String> merged = new HashMap<>(environment);
+    merged.putAll(proxy);
+    return merged;
+  }
+
+  /**
+   * Percent-encodes {@code value} for a URL's userinfo component — RFC 3986 unreserved characters
+   * ({@code A-Za-z0-9-_.~}) literal, everything else {@code %XX}. {@link java.net.URLEncoder}
+   * answers the wrong standard here (form encoding: a space becomes {@code +}, not {@code %20}), and
+   * a bearer token can hold characters a basic-auth URL userinfo cannot without escaping — {@code /}
+   * and {@code +} out of base64, or a literal {@code @} or {@code :}.
+   */
+  static String urlEncode(String value) {
+    StringBuilder encoded = new StringBuilder();
+    for (byte raw : value.getBytes(java.nio.charset.StandardCharsets.UTF_8)) {
+      int b = raw & 0xFF;
+      if ((b >= 'A' && b <= 'Z')
+          || (b >= 'a' && b <= 'z')
+          || (b >= '0' && b <= '9')
+          || b == '-'
+          || b == '_'
+          || b == '.'
+          || b == '~') {
+        encoded.append((char) b);
+      } else {
+        encoded.append('%').append(String.format("%02X", b));
+      }
+    }
+    return encoded.toString();
   }
 
   /**
@@ -194,8 +282,15 @@ public class ClaudeCodeAgent extends CodingAgent {
       settings.put("autoMemoryDirectory", agentConfigDir.resolve("memory").toString());
       settings.put("enabledPlugins", agentEnabledPlugins.copy());
     }
-    // Always last into the one --settings, so every launch carries it.
     settings = settings != null ? settings : new JsonObject();
+    String egressProxy = environment == null ? null : environment.get(QITS_EGRESS_PROXY);
+    if (egressProxy != null && !egressProxy.isBlank()) {
+      // qits-egress already enforces this container's outbound policy and audit at the proxy
+      // (qits-2525), so Claude's own WebFetch preflight — which refuses a private host outright —
+      // is redundant here, and would block exactly the traffic the proxy exists to allow through.
+      settings.put("skipWebFetchPreflight", true);
+    }
+    // Always last into the one --settings, so every launch carries it.
     settings.mergeIn(new JsonObject(NO_ATTRIBUTION));
     command.append(" --settings ").append(shellQuote(settings.encode()));
     if (agentConfigDir != null) {
