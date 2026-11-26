@@ -119,7 +119,9 @@ public abstract class CodingAgent {
    * Whether to also emit the turn-boundary activity hooks (UserPromptSubmit / Stop / Notification /
    * SessionEnd) alongside the always-on SessionStart hook. Gated by {@link
    * AgentDefaults#activityTrackingEnabled()}; SessionStart is emitted regardless (it drives
-   * session-lineage). Only meaningful when {@link #sessionReportingUrl} is set.
+   * session-lineage). Only meaningful when {@link #sessionReportingUrl} is set. Claude Code also
+   * wires {@code StopFailure} beside {@code Stop} (it fires instead of {@code Stop} when a turn
+   * ends on an API error); Kimi has no equivalent event.
    */
   protected boolean activityTracking;
 

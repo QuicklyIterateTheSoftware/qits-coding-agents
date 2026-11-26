@@ -660,6 +660,7 @@ class AgentLaunchServiceProjectHostTest {
 
       assertTrue(script.contains("\"SessionStart\""), "lineage is not optional");
       assertFalse(script.contains("\"UserPromptSubmit\""), "the turn-boundary hooks are");
+      assertFalse(script.contains("\"StopFailure\""), "the turn-boundary hooks are");
     }
 
     @Test
@@ -2966,21 +2967,23 @@ class AgentLaunchServiceProjectHostTest {
       // The daemon-wide setting still answers for a container with no document.
       activityTracking = false;
       configurations = AgentSurfaceConfigurations.shipped();
-      assertFalse(
+      String noTracking =
           service
               .renderChat(
                   AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK, pinned, AgentType.CLAUDE)
-              .script()
-              .contains("\"Stop\""));
+              .script();
+      assertFalse(noTracking.contains("\"Stop\""));
+      assertFalse(noTracking.contains("\"StopFailure\""));
 
       // With a document, the surface's own value wins over it.
       configurations = seeded();
-      assertTrue(
+      String tracking =
           service
               .renderChat(
                   AgentMcpScope.PROJECT, AgentSurface.PROJECT_WORK, pinned, AgentType.CLAUDE)
-              .script()
-              .contains("\"Stop\""));
+              .script();
+      assertTrue(tracking.contains("\"Stop\""));
+      assertTrue(tracking.contains("\"StopFailure\""));
     }
 
     @Test

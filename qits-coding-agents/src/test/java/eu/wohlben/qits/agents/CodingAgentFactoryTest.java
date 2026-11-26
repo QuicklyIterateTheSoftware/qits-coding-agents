@@ -224,6 +224,7 @@ public class CodingAgentFactoryTest {
     // Without activity tracking, only SessionStart is wired (lineage) — no turn-boundary events.
     assertFalse(cmd.contains("\"UserPromptSubmit\""), cmd);
     assertFalse(cmd.contains("\"Stop\""), cmd);
+    assertFalse(cmd.contains("\"StopFailure\""), cmd);
     assertFalse(cmd.contains("\"Notification\""), cmd);
     assertFalse(cmd.contains("\"SessionEnd\""), cmd);
   }
@@ -237,10 +238,12 @@ public class CodingAgentFactoryTest {
             .chat()
             .script();
 
-    // SessionStart stays (lineage) and the four activity events are added.
+    // SessionStart stays (lineage) and the five activity events are added, StopFailure included
+    // because it fires instead of Stop when the turn ended on an API error.
     assertTrue(cmd.contains("\"SessionStart\""), cmd);
     assertTrue(cmd.contains("\"UserPromptSubmit\""), cmd);
     assertTrue(cmd.contains("\"Stop\""), cmd);
+    assertTrue(cmd.contains("\"StopFailure\""), cmd);
     assertTrue(cmd.contains("\"Notification\""), cmd);
     assertTrue(cmd.contains("\"SessionEnd\""), cmd);
   }

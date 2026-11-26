@@ -352,7 +352,10 @@ public class ClaudeCodeAgent extends CodingAgent {
    * resume}/{@code clear}/{@code compact} and drives session-lineage, which is non-optional. When
    * {@link #activityTracking} is on, the turn-boundary events ({@code UserPromptSubmit}/{@code
    * Stop}/{@code Notification}/{@code SessionEnd}) are added too, so qits can show the live
-   * "cooking / idle / waiting" state.
+   * "cooking / idle / waiting" state — plus {@code StopFailure}, which fires <em>instead of</em>
+   * {@code Stop} when a turn ends on an API error (its stdin JSON carries {@code error}/{@code
+   * error_details}/{@code last_assistant_message} rather than a clean transcript position), wired
+   * beside {@code Stop} in the same hook group so a failed turn is reported too.
    */
   private JsonObject activityHookSettings() {
     if (sessionReportingUrl.contains("'")) {
@@ -377,6 +380,7 @@ public class ClaudeCodeAgent extends CodingAgent {
     if (activityTracking) {
       hooks.put("UserPromptSubmit", group);
       hooks.put("Stop", group);
+      hooks.put("StopFailure", group); // fires instead of Stop when the turn ended on an API error
       hooks.put("Notification", group);
       hooks.put("SessionEnd", group);
     }

@@ -410,6 +410,7 @@ class AgentLaunchServiceWorkspaceHostTest {
 
       assertTrue(script.contains("\"SessionStart\""), "lineage is not optional");
       assertFalse(script.contains("\"UserPromptSubmit\""), "the turn-boundary hooks are");
+      assertFalse(script.contains("\"StopFailure\""), "the turn-boundary hooks are");
     }
 
     @Test

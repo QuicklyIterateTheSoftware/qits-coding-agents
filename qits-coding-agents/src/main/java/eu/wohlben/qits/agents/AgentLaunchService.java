@@ -522,7 +522,8 @@ public final class AgentLaunchService {
    * What a host's hook webhook heard about an agent command's turn state — the listener that makes
    * interactive renames possible (see {@link #setEntity}). The host calls it for every state it
    * <em>stores</em>, with the vocabulary its hook mapping produces: {@code IDLE} (SessionStart,
-   * Stop), {@code BUSY} (UserPromptSubmit), {@code WAITING} (Notification — a permission prompt) and
+   * Stop, StopFailure — a turn that ended on an API error is idle again like any other finished
+   * turn), {@code BUSY} (UserPromptSubmit), {@code WAITING} (Notification — a permission prompt) and
    * {@code ENDED} (SessionEnd). Stored, not received: a Stop the webhook drops because a permission
    * prompt is pending must not arrive here as {@code IDLE}, or a rename would be typed into the
    * dialog.
