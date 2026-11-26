@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 /** Pure-renderer tests for the coding-agent builder — no CDI, just the shell it produces. */
@@ -19,6 +20,16 @@ public class CodingAgentFactoryTest {
 
   /** Every launch ends with the settings that turn off Claude's attribution (qits-1666). */
   private static final String NA = ClaudeCodeAgent.noAttributionFlag();
+
+  /**
+   * {@link ClaudeCodeAgent#processEnv} is a static seam, shared with every other test in the JVM —
+   * restore it to the real process environment after every test here, whether or not the test body
+   * touched it, so a left-over stub never leaks into an unrelated test.
+   */
+  @AfterEach
+  public void restoreProcessEnvironment() {
+    ClaudeCodeAgent.processEnv = System::getenv;
+  }
 
   @Test
   public void interactiveWithoutMcpJustExecsClaude() {
@@ -282,6 +293,11 @@ public class CodingAgentFactoryTest {
 
   @Test
   public void egressProxyEnvRequiresBothNonBlankHalves() {
+    // Pins the process-env fallback to empty, so this exercises only the overlay-map half of
+    // resolveEnv — the container this suite happens to run in (an agent container) carries both
+    // keys for real, which the process-env fallback tests below cover on their own terms.
+    ClaudeCodeAgent.processEnv = key -> null;
+
     assertTrue(ClaudeCodeAgent.egressProxyEnv(Map.of()).isEmpty());
     assertTrue(ClaudeCodeAgent.egressProxyEnv(Map.of("QITS_EGRESS_PROXY", "p")).isEmpty());
     assertTrue(ClaudeCodeAgent.egressProxyEnv(Map.of("QITS_TOKEN", "t")).isEmpty());
@@ -356,6 +372,11 @@ public class CodingAgentFactoryTest {
 
   @Test
   public void withoutTheEgressProxyNothingChanges() {
+    // Pins the process-env fallback to empty: this container the suite happens to run in carries
+    // both keys for real (qits-2658's own live bug), so without this the "no proxy anywhere" premise
+    // below would not hold. The process-env fallback has its own tests, above.
+    ClaudeCodeAgent.processEnv = key -> null;
+
     // No QITS_EGRESS_PROXY at all: a launch overlaid with only a token (every launch before
     // qits-2658) gets no proxy env vars and no settings key — neither half of either feature.
     LaunchSpec tokenOnly =
@@ -398,5 +419,67 @@ public class CodingAgentFactoryTest {
 
     String withoutProxy = CodingAgentFactory.ofType(AgentType.CLAUDE).run("hi").script();
     assertFalse(withoutProxy.contains("skipWebFetchPreflight"), withoutProxy);
+  }
+
+  // --- process-environment fallback (qits-2658 live bug) ------------------------------------------
+  //
+  // The image init hook (50-egress.sh) exports QITS_EGRESS_PROXY straight into the daemon's own
+  // process environment, never into a launch's `environment` overlay map — and a project agent's or
+  // a desk's QITS_TOKEN is likewise only ever the container's own process-env value, never repeated
+  // as an overlay entry. These tests drive ClaudeCodeAgent.processEnv directly rather than the real
+  // environment, so they do not depend on (or risk polluting) the test JVM's actual process env.
+
+  @Test
+  public void egressProxyFallsBackToTheProcessEnvironmentForTheProxyAddressOnly() {
+    // (a) QITS_EGRESS_PROXY only in the process env, QITS_TOKEN only in the overlay map: the proxy
+    // URL carries the map's token, and skipWebFetchPreflight is still added.
+    ClaudeCodeAgent.processEnv = Map.of("QITS_EGRESS_PROXY", "127.0.0.1:3128")::get;
+
+    LaunchSpec spec =
+        CodingAgentFactory.ofType(AgentType.CLAUDE).environment("QITS_TOKEN", "overlaidToken").start();
+
+    assertEquals(
+        "http://agent:overlaidToken@127.0.0.1:3128", spec.environment().get("HTTPS_PROXY"));
+    assertTrue(spec.script().contains("\"skipWebFetchPreflight\":true"), spec.script());
+  }
+
+  @Test
+  public void egressProxyFallsBackToTheProcessEnvironmentForBothHalves() {
+    // (b) Both QITS_EGRESS_PROXY and QITS_TOKEN only in the process env (a project agent or a desk,
+    // whose token never repeats in the overlay map): the proxy URL carries the process token.
+    ClaudeCodeAgent.processEnv =
+        Map.of("QITS_EGRESS_PROXY", "127.0.0.1:3128", "QITS_TOKEN", "processToken")::get;
+
+    LaunchSpec spec = CodingAgentFactory.ofType(AgentType.CLAUDE).start();
+
+    assertEquals(
+        "http://agent:processToken@127.0.0.1:3128", spec.environment().get("HTTPS_PROXY"));
+    assertTrue(spec.script().contains("\"skipWebFetchPreflight\":true"), spec.script());
+  }
+
+  @Test
+  public void egressProxyStaysEmptyWhenNeitherKeyIsAnywhere() {
+    // (c) Neither key in the overlay map nor in the process env: nothing changes, as before the fix.
+    ClaudeCodeAgent.processEnv = key -> null;
+
+    LaunchSpec spec = CodingAgentFactory.ofType(AgentType.CLAUDE).start();
+
+    assertFalse(spec.environment().containsKey("HTTPS_PROXY"));
+    assertFalse(spec.script().contains("skipWebFetchPreflight"), spec.script());
+  }
+
+  @Test
+  public void theOverlaidTokenStillWinsOverATokenOnlyInTheProcessEnvironment() {
+    // The process env is a fallback, never an override: a workspace's per-agent QITS_TOKEN, applied
+    // as an overlay entry, must beat the container's own token sitting underneath it in the process
+    // environment — exactly as it already did when both of those lived only in the overlay map.
+    ClaudeCodeAgent.processEnv =
+        Map.of("QITS_EGRESS_PROXY", "127.0.0.1:3128", "QITS_TOKEN", "containerToken")::get;
+
+    LaunchSpec spec =
+        CodingAgentFactory.ofType(AgentType.CLAUDE).environment("QITS_TOKEN", "overlaidToken").start();
+
+    assertEquals(
+        "http://agent:overlaidToken@127.0.0.1:3128", spec.environment().get("HTTPS_PROXY"));
   }
 }
