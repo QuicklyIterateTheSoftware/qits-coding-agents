@@ -143,24 +143,53 @@ public class ClaudeCodeAgent extends CodingAgent {
   static final String QITS_TOKEN = "QITS_TOKEN";
 
   /**
+   * The real process environment, read only when a key is missing or blank in the launch's own
+   * overlay. The image init hook ({@code 50-egress.sh}, dossier page "Reaching the proxy") exports
+   * {@link #QITS_EGRESS_PROXY} straight into the daemon's own process environment — {@code
+   * System.getenv}, never the launch's {@code environment} overlay — so a renderer that read only
+   * {@code environment} would never see it for any launch whose overlay does not separately repeat
+   * it. {@link #QITS_TOKEN} is the same story for a project agent or a desk session, whose token is
+   * the container's own and never re-applied as an overlay entry. Package-private and mutable so a
+   * test can drive a process environment without touching the real one.
+   */
+  static java.util.function.Function<String, String> processEnv = System::getenv;
+
+  /**
+   * Resolves {@code key} from the launch's own overlay first, falling back to {@link #processEnv}
+   * when the overlay has no non-blank value for it. The overlay wins when it has one — a workspace's
+   * per-agent {@code QITS_TOKEN}, applied as an overlay entry, must still be the credential the proxy
+   * sees even though the container's own token is sitting in the process environment underneath it —
+   * and the process environment is read only as a fallback, never to override an overlay value.
+   */
+  private static String resolveEnv(Map<String, String> environment, String key) {
+    String overlaid = environment == null ? null : environment.get(key);
+    if (overlaid != null && !overlaid.isBlank()) {
+      return overlaid;
+    }
+    return processEnv.apply(key);
+  }
+
+  /**
    * The proxy env vars that route this session's outbound HTTP through qits-egress's forward proxy,
    * authenticated as the bearer this launch's shell itself carries ({@code
    * http://agent:<url-encoded QITS_TOKEN>@<QITS_EGRESS_PROXY>}) — so a Bash tool's children inherit
    * the same proxy, and qits-egress's audit names the session's own principal rather than a fixed
-   * one. Empty when either half of the pair is missing from {@code environment} — a container with
-   * the proxy off, or a launch with no token to act as at all — which is every launch before this
-   * epic and the whole of {@link #QITS_EGRESS_PROXY}'s "without the proxy nothing changes"
-   * guarantee.
+   * one. Empty when either half of the pair is missing from both {@code environment} and the process
+   * environment — a container with the proxy off, or a launch with no token to act as at all —
+   * which is every launch before this epic and the whole of {@link #QITS_EGRESS_PROXY}'s "without
+   * the proxy nothing changes" guarantee.
    *
-   * <p>Reads {@code environment} rather than any ambient process environment, on purpose: this is a
-   * pure renderer, and the caller — {@link AgentLaunchService#render}, which applies the launch's own
-   * overlay to the agent before asking it to render anything — is what makes sure the two keys this
-   * reads are the <em>final</em> ones the process will get, including a per-agent {@code QITS_TOKEN}
-   * applied outside this class.
+   * <p>Resolves each key through {@link #resolveEnv}: the launch's own overlay first — the caller,
+   * {@link AgentLaunchService#render}, applies the launch's overlay to the agent before asking it to
+   * render anything, including a per-agent {@code QITS_TOKEN} applied outside this class — and,
+   * failing that, the process environment the daemon itself runs under, which is where the image
+   * init hook exports {@link #QITS_EGRESS_PROXY} and where a project agent's or a desk's own {@code
+   * QITS_TOKEN} actually lives (qits-2658 live bug: neither was ever in {@code environment} for those
+   * launches, so the proxy was never set and {@code skipWebFetchPreflight} was never added).
    */
   static Map<String, String> egressProxyEnv(Map<String, String> environment) {
-    String proxy = environment == null ? null : environment.get(QITS_EGRESS_PROXY);
-    String token = environment == null ? null : environment.get(QITS_TOKEN);
+    String proxy = resolveEnv(environment, QITS_EGRESS_PROXY);
+    String token = resolveEnv(environment, QITS_TOKEN);
     if (proxy == null || proxy.isBlank() || token == null || token.isBlank()) {
       return Map.of();
     }
@@ -283,11 +312,14 @@ public class ClaudeCodeAgent extends CodingAgent {
       settings.put("enabledPlugins", agentEnabledPlugins.copy());
     }
     settings = settings != null ? settings : new JsonObject();
-    String egressProxy = environment == null ? null : environment.get(QITS_EGRESS_PROXY);
+    String egressProxy = resolveEnv(environment, QITS_EGRESS_PROXY);
     if (egressProxy != null && !egressProxy.isBlank()) {
       // qits-egress already enforces this container's outbound policy and audit at the proxy
       // (qits-2525), so Claude's own WebFetch preflight — which refuses a private host outright —
       // is redundant here, and would block exactly the traffic the proxy exists to allow through.
+      // The image init hook exports QITS_EGRESS_PROXY into the process environment, not into this
+      // launch's own `environment` overlay (see resolveEnv), so this must fall back the same way
+      // egressProxyEnv does.
       settings.put("skipWebFetchPreflight", true);
     }
     // Always last into the one --settings, so every launch carries it.
